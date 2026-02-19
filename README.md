@@ -16,7 +16,6 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-3.9+-blue?style=flat-square&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License">
   <img src="https://img.shields.io/badge/OWASP-ML%20Top%2010-red?style=flat-square" alt="OWASP">
   <img src="https://img.shields.io/badge/MITRE-ATLAS-orange?style=flat-square" alt="MITRE ATLAS">
 </p>
