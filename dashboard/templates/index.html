@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block nav_home %}bg-gray-700{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex justify-between items-center">
+        <h1 class="text-2xl font-bold">Dashboard Overview</h1>
+        <button
+            hx-get="/api/stats"
+            hx-target="#stats-content"
+            hx-trigger="click"
+            hx-swap="innerHTML"
+            class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-md text-sm font-medium"
+        >
+            Refresh Stats
+        </button>
+    </div>
+
+    <!-- Stats Cards -->
+    <div id="stats-content" hx-get="/api/stats" hx-trigger="load" hx-swap="innerHTML">
+        <div class="text-center py-8">
+            <span class="htmx-indicator">Loading statistics...</span>
+        </div>
+    </div>
+
+    <!-- Quick Filters -->
+    <div class="bg-gray-800 rounded-lg p-6">
+        <h2 class="text-lg font-semibold mb-4">Quick Filter by OWASP LLM Top 10</h2>
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {% for owasp_id, info in owasp_top_10.items() %}
+            <a
+                href="/corpus?owasp={{ owasp_id }}"
+                class="bg-gray-700 hover:bg-gray-600 p-3 rounded-md text-center"
+            >
+                <div class="text-red-400 font-bold">{{ owasp_id }}</div>
+                <div class="text-xs text-gray-400">{{ info.name }}</div>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Category Overview -->
+    <div class="bg-gray-800 rounded-lg p-6">
+        <h2 class="text-lg font-semibold mb-4">Attack Categories</h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {% for category in categories %}
+            <a
+                href="/corpus?category={{ category }}"
+                class="bg-gray-700 hover:bg-gray-600 p-4 rounded-md"
+            >
+                <div class="text-sm font-medium">{{ category | replace("_", " ") | title }}</div>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="bg-gray-800 rounded-lg p-6">
+        <h2 class="text-lg font-semibold mb-4">Quick Actions</h2>
+        <div class="flex flex-wrap gap-4">
+            <a href="/generator" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-md">
+                Generate New Corpus
+            </a>
+            <a href="/corpus" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-md">
+                Browse Test Cases
+            </a>
+            <a href="/executor" class="bg-purple-600 hover:bg-purple-700 px-4 py-2 rounded-md">
+                Execute Tests
+            </a>
+            <a href="/api/export/json" class="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-md">
+                Export JSON
+            </a>
+            <a href="/api/export/md" class="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded-md">
+                Export Markdown
+            </a>
+        </div>
+    </div>
+</div>
+
+<script>
+// Handle stats response
+document.body.addEventListener('htmx:afterSwap', function(evt) {
+    if (evt.detail.target.id === 'stats-content') {
+        const data = JSON.parse(evt.detail.xhr.responseText);
+        renderStats(data);
+    }
+});
+
+function renderStats(data) {
+    const container = document.getElementById('stats-content');
+    container.innerHTML = `
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div class="bg-gray-800 rounded-lg p-6 text-center">
+                <div class="text-3xl font-bold text-red-500">${data.total_test_cases}</div>
+                <div class="text-gray-400">Total Test Cases</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-6 text-center">
+                <div class="text-3xl font-bold text-orange-500">${data.by_severity?.critical || 0}</div>
+                <div class="text-gray-400">Critical Severity</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-6 text-center">
+                <div class="text-3xl font-bold text-yellow-500">${data.by_severity?.high || 0}</div>
+                <div class="text-gray-400">High Severity</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-6 text-center">
+                <div class="text-3xl font-bold text-blue-500">${Object.keys(data.by_category || {}).length}</div>
+                <div class="text-gray-400">Categories</div>
+            </div>
+        </div>
+        <div class="bg-gray-800 rounded-lg p-6">
+            <h3 class="text-lg font-semibold mb-3">Category Breakdown</h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                ${Object.entries(data.by_category || {}).map(([cat, count]) => `
+                    <div class="bg-gray-700 p-2 rounded text-center">
+                        <div class="text-sm">${cat.replace(/_/g, ' ')}</div>
+                        <div class="font-bold">${count}</div>
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    `;
+}
+</script>
+{% endblock %}

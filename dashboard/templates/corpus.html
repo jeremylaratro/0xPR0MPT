@@ -1,0 +1,356 @@
+{% extends "base.html" %}
+
+{% block nav_corpus %}bg-gray-700{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex justify-between items-center">
+        <h1 class="text-2xl font-bold">Test Corpus Browser</h1>
+        <div class="flex gap-2">
+            <a href="/api/export/json" class="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded text-sm">
+                Export JSON
+            </a>
+            <a href="/api/export/md" class="bg-gray-600 hover:bg-gray-500 px-3 py-1 rounded text-sm">
+                Export MD
+            </a>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="bg-gray-800 rounded-lg p-4">
+        <form
+            hx-post="/api/corpus/filter"
+            hx-target="#results"
+            hx-trigger="change, submit"
+            hx-swap="innerHTML"
+            class="grid grid-cols-2 md:grid-cols-6 gap-4"
+        >
+            <!-- OWASP Filter -->
+            <div>
+                <label class="block text-xs text-gray-400 mb-1">OWASP LLM Top 10</label>
+                <select name="owasp" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+                    <option value="">All OWASP</option>
+                    {% for owasp_id, info in owasp_top_10.items() %}
+                    <option value="{{ owasp_id }}">{{ owasp_id }}: {{ info.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Category Filter -->
+            <div>
+                <label class="block text-xs text-gray-400 mb-1">Category</label>
+                <select name="category" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+                    <option value="">All Categories</option>
+                    {% for category in categories %}
+                    <option value="{{ category }}">{{ category | replace("_", " ") | title }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Severity Filter -->
+            <div>
+                <label class="block text-xs text-gray-400 mb-1">Severity</label>
+                <select name="severity" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+                    <option value="">All Severities</option>
+                    <option value="critical">Critical</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                    <option value="info">Info</option>
+                </select>
+            </div>
+
+            <!-- Model Filter -->
+            <div>
+                <label class="block text-xs text-gray-400 mb-1">Target Model</label>
+                <select name="model" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+                    {% for model in target_models %}
+                    <option value="{{ model }}">{{ model | upper }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Complexity Filter -->
+            <div>
+                <label class="block text-xs text-gray-400 mb-1">Min Complexity</label>
+                <select name="complexity" class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm">
+                    <option value="">Any</option>
+                    <option value="1">1 (Simple)</option>
+                    <option value="2">2</option>
+                    <option value="3">3 (Medium)</option>
+                    <option value="4">4</option>
+                    <option value="5">5 (Advanced)</option>
+                </select>
+            </div>
+
+            <!-- Search -->
+            <div>
+                <label class="block text-xs text-gray-400 mb-1">Search</label>
+                <input
+                    type="text"
+                    name="search"
+                    placeholder="Search payloads..."
+                    class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-sm"
+                    hx-post="/api/corpus/filter"
+                    hx-target="#results"
+                    hx-trigger="keyup changed delay:300ms"
+                    hx-include="closest form"
+                >
+            </div>
+        </form>
+    </div>
+
+    <!-- Results Count -->
+    <div id="results-count" class="text-gray-400 text-sm">
+        Loading test cases...
+    </div>
+
+    <!-- Results Grid -->
+    <div id="results" hx-get="/api/corpus" hx-trigger="load" hx-swap="innerHTML" class="space-y-3">
+        <div class="text-center py-8 text-gray-500">
+            <span class="htmx-indicator">Loading...</span>
+        </div>
+    </div>
+</div>
+
+<!-- Modal for test case details -->
+<div id="modal" class="fixed inset-0 bg-black bg-opacity-75 hidden z-50 flex items-center justify-center">
+    <div class="bg-gray-800 rounded-lg max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="p-6">
+            <div class="flex justify-between items-start mb-4">
+                <h2 id="modal-title" class="text-xl font-bold"></h2>
+                <button onclick="closeModal()" class="text-gray-400 hover:text-white">&times;</button>
+            </div>
+            <div id="modal-content"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Handle API responses
+document.body.addEventListener('htmx:afterSwap', function(evt) {
+    if (evt.detail.target.id === 'results') {
+        try {
+            const data = JSON.parse(evt.detail.xhr.responseText);
+            renderResults(data);
+        } catch (e) {
+            console.error('Error parsing response:', e);
+        }
+    }
+});
+
+function renderResults(data) {
+    const container = document.getElementById('results');
+    document.getElementById('results-count').textContent = `Showing ${data.count} test cases`;
+
+    if (data.test_cases.length === 0) {
+        container.innerHTML = '<div class="text-center py-8 text-gray-500">No test cases match your filters</div>';
+        return;
+    }
+
+    container.innerHTML = data.test_cases.map(tc => `
+        <div class="bg-gray-800 rounded-lg p-4 hover:bg-gray-750 cursor-pointer" onclick="showDetails('${tc.id}')">
+            <div class="flex justify-between items-start mb-2">
+                <div>
+                    <span class="font-mono text-xs text-gray-500">${tc.id}</span>
+                    <h3 class="font-semibold">${tc.name}</h3>
+                </div>
+                <div class="flex gap-2">
+                    <span class="px-2 py-1 rounded text-xs severity-${tc.severity}">${tc.severity.toUpperCase()}</span>
+                    <span class="px-2 py-1 rounded text-xs bg-gray-700">${tc.category}</span>
+                    <span class="px-2 py-1 rounded text-xs bg-blue-900">L${tc.complexity_level}</span>
+                </div>
+            </div>
+            <p class="text-sm text-gray-400">${tc.description}</p>
+            ${tc.techniques_used && tc.techniques_used.length > 0 ? `
+                <div class="mt-2 flex flex-wrap gap-1">
+                    ${tc.techniques_used.map(t => `<span class="px-1 py-0.5 bg-gray-700 rounded text-xs">${t}</span>`).join('')}
+                </div>
+            ` : ''}
+            ${tc.payload_preview ? `
+                <div class="mt-2 p-2 bg-gray-900 rounded text-xs font-mono text-gray-400 truncate">
+                    ${tc.payload_preview.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
+                </div>
+            ` : ''}
+            <div class="mt-2 flex gap-2">
+                <button onclick="event.stopPropagation(); copyPayload('${tc.id}')" class="text-xs text-blue-400 hover:text-blue-300">Copy Payload</button>
+                <button onclick="event.stopPropagation(); runTest('${tc.id}')" class="text-xs text-green-400 hover:text-green-300">Run Test</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function showDetails(testId) {
+    const response = await fetch(`/api/corpus/${testId}`);
+    const tc = await response.json();
+
+    document.getElementById('modal-title').textContent = tc.name;
+    document.getElementById('modal-content').innerHTML = `
+        <div class="space-y-4">
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="text-xs text-gray-400">ID</label>
+                    <div class="font-mono">${tc.id}</div>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-400">Category</label>
+                    <div>${tc.category}</div>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-400">Severity</label>
+                    <div><span class="px-2 py-1 rounded severity-${tc.severity}">${tc.severity.toUpperCase()}</span></div>
+                </div>
+                <div>
+                    <label class="text-xs text-gray-400">Complexity</label>
+                    <div>Level ${tc.complexity_level}</div>
+                </div>
+            </div>
+
+            <div>
+                <label class="text-xs text-gray-400">Description</label>
+                <div class="bg-gray-900 p-3 rounded">${tc.description}</div>
+            </div>
+
+            <div>
+                <label class="text-xs text-gray-400">Payload</label>
+                <pre class="bg-gray-900 p-3 rounded text-sm overflow-x-auto whitespace-pre-wrap">${tc.payload.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
+                <button onclick="copyToClipboard(\`${tc.payload.replace(/`/g, '\\`').replace(/\\/g, '\\\\')}\`)" class="mt-2 bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-sm">
+                    Copy Payload
+                </button>
+            </div>
+
+            <div>
+                <label class="text-xs text-gray-400">Expected Behavior</label>
+                <div class="bg-gray-900 p-3 rounded">${tc.expected_behavior}</div>
+            </div>
+
+            ${tc.success_indicators && tc.success_indicators.length > 0 ? `
+                <div>
+                    <label class="text-xs text-gray-400">Success Indicators</label>
+                    <div class="flex flex-wrap gap-2">
+                        ${tc.success_indicators.map(i => `<span class="px-2 py-1 bg-red-900 rounded text-sm">${i}</span>`).join('')}
+                    </div>
+                </div>
+            ` : ''}
+
+            ${tc.techniques_used && tc.techniques_used.length > 0 ? `
+                <div>
+                    <label class="text-xs text-gray-400">Techniques Used</label>
+                    <div class="flex flex-wrap gap-2">
+                        ${tc.techniques_used.map(t => `<span class="px-2 py-1 bg-purple-900 rounded text-sm">${t}</span>`).join('')}
+                    </div>
+                </div>
+            ` : ''}
+
+            ${tc.target_models && tc.target_models.length > 0 ? `
+                <div>
+                    <label class="text-xs text-gray-400">Target Models</label>
+                    <div class="flex flex-wrap gap-2">
+                        ${tc.target_models.map(m => `<span class="px-2 py-1 bg-green-900 rounded text-sm">${m}</span>`).join('')}
+                    </div>
+                </div>
+            ` : ''}
+
+            ${tc.research_source ? `
+                <div>
+                    <label class="text-xs text-gray-400">Research Source</label>
+                    <div>${tc.research_source}</div>
+                </div>
+            ` : ''}
+        </div>
+    `;
+
+    document.getElementById('modal').classList.remove('hidden');
+}
+
+function closeModal() {
+    document.getElementById('modal').classList.add('hidden');
+}
+
+function copyPayload(testId) {
+    fetch(`/api/corpus/${testId}`)
+        .then(r => r.json())
+        .then(tc => {
+            // Try modern clipboard API first
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(tc.payload)
+                    .then(() => showNotification('Payload copied to clipboard!'))
+                    .catch(err => fallbackCopy(tc.payload));
+            } else {
+                fallbackCopy(tc.payload);
+            }
+        })
+        .catch(err => showNotification('Error loading payload', 'error'));
+}
+
+function fallbackCopy(text) {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-999999px';
+    textArea.style.top = '-999999px';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try {
+        document.execCommand('copy');
+        showNotification('Payload copied to clipboard!');
+    } catch (err) {
+        showNotification('Failed to copy', 'error');
+    }
+    document.body.removeChild(textArea);
+}
+
+function showNotification(message, type = 'success') {
+    const notification = document.createElement('div');
+    notification.className = `fixed bottom-4 right-4 px-4 py-2 rounded-lg text-white z-50 ${type === 'error' ? 'bg-red-600' : 'bg-green-600'}`;
+    notification.textContent = message;
+    document.body.appendChild(notification);
+    setTimeout(() => notification.remove(), 2000);
+}
+
+function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text)
+            .then(() => showNotification('Payload copied to clipboard!'))
+            .catch(err => fallbackCopy(text));
+    } else {
+        fallbackCopy(text);
+    }
+}
+
+function runTest(testId) {
+    window.location.href = `/executor?test=${testId}`;
+}
+
+// Close modal on escape
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeModal();
+});
+
+// Handle URL query parameters for pre-selecting filters
+document.addEventListener('DOMContentLoaded', function() {
+    const params = new URLSearchParams(window.location.search);
+    const filterForm = document.querySelector('form[hx-post="/api/corpus/filter"]');
+    let hasFilters = false;
+
+    // Map URL params to form fields
+    ['owasp', 'category', 'severity', 'model', 'complexity', 'search'].forEach(param => {
+        const value = params.get(param);
+        if (value) {
+            const field = filterForm.querySelector(`[name="${param}"]`);
+            if (field) {
+                field.value = value;
+                hasFilters = true;
+            }
+        }
+    });
+
+    // If we have URL filters, trigger the filter request
+    if (hasFilters) {
+        htmx.trigger(filterForm, 'submit');
+    }
+});
+</script>
+{% endblock %}

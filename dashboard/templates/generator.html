@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+
+{% block nav_generator %}bg-gray-700{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <h1 class="text-2xl font-bold">Corpus Generator</h1>
+
+    <!-- Generator Form -->
+    <div class="bg-gray-800 rounded-lg p-6">
+        <h2 class="text-lg font-semibold mb-4">Generate New Test Corpus</h2>
+
+        <form id="generate-form" class="space-y-4">
+            <!-- Target Input -->
+            <div>
+                <label class="block text-sm text-gray-400 mb-2">Target (Optional)</label>
+                <input
+                    type="text"
+                    name="target"
+                    id="target-input"
+                    placeholder="e.g., Data for User ID 02, Admin credentials, API keys..."
+                    class="w-full bg-gray-700 border border-gray-600 rounded px-4 py-2 text-sm focus:outline-none focus:border-green-500"
+                >
+                <p class="mt-1 text-xs text-gray-500">
+                    If set, all generated payloads will target this specific data/resource. Leave empty for generic payloads.
+                </p>
+            </div>
+
+            <div>
+                <label class="block text-sm text-gray-400 mb-2">Select Categories</label>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    {% for category in categories %}
+                    <label class="flex items-center space-x-2 bg-gray-700 p-2 rounded cursor-pointer hover:bg-gray-600">
+                        <input type="checkbox" name="categories" value="{{ category }}" checked class="rounded">
+                        <span class="text-sm">{{ category | replace("_", " ") | title }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <button
+                type="submit"
+                class="bg-green-600 hover:bg-green-700 px-6 py-2 rounded-md font-medium"
+            >
+                Generate Corpus
+            </button>
+        </form>
+    </div>
+
+    <!-- Generation Results -->
+    <div id="results" class="hidden">
+        <div class="bg-gray-800 rounded-lg p-6">
+            <h2 class="text-lg font-semibold mb-4">Generation Results</h2>
+            <div id="results-content"></div>
+        </div>
+    </div>
+
+    <!-- Progress -->
+    <div id="progress" class="hidden">
+        <div class="bg-gray-800 rounded-lg p-6">
+            <div class="flex items-center space-x-4">
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500"></div>
+                <div>Generating corpus...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+document.getElementById('generate-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    document.getElementById('progress').classList.remove('hidden');
+    document.getElementById('results').classList.add('hidden');
+
+    const formData = new FormData(this);
+    const categories = formData.getAll('categories');
+    const target = formData.get('target') || null;
+
+    try {
+        const response = await fetch('/api/corpus/generate', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({categories, target})
+        });
+
+        const data = await response.json();
+
+        document.getElementById('progress').classList.add('hidden');
+        document.getElementById('results').classList.remove('hidden');
+
+        document.getElementById('results-content').innerHTML = `
+            <div class="space-y-4">
+                <div class="flex items-center space-x-2">
+                    <span class="text-green-500 text-2xl">&#10003;</span>
+                    <span class="text-xl">Successfully generated ${data.count} test cases</span>
+                </div>
+
+                ${data.target ? `
+                <div class="bg-gray-700 p-3 rounded">
+                    <span class="text-gray-400 text-sm">Target:</span>
+                    <span class="ml-2 text-green-400 font-mono">${data.target}</span>
+                </div>
+                ` : ''}
+
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    ${Object.entries(data.categories).map(([cat, count]) => `
+                        <div class="bg-gray-700 p-3 rounded text-center">
+                            <div class="text-sm text-gray-400">${cat.replace(/_/g, ' ')}</div>
+                            <div class="text-2xl font-bold">${count}</div>
+                        </div>
+                    `).join('')}
+                </div>
+
+                <div class="flex gap-4 mt-6">
+                    <a href="/api/export/json" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">
+                        Download JSON
+                    </a>
+                    <a href="/api/export/md" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded">
+                        Download Markdown
+                    </a>
+                    <a href="/corpus" class="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded">
+                        Browse Corpus
+                    </a>
+                </div>
+            </div>
+        `;
+    } catch (error) {
+        document.getElementById('progress').classList.add('hidden');
+        document.getElementById('results').classList.remove('hidden');
+        document.getElementById('results-content').innerHTML = `
+            <div class="text-red-500">Error: ${error.message}</div>
+        `;
+    }
+});
+</script>
+{% endblock %}

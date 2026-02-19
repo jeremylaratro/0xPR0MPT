@@ -1,0 +1,40 @@
+/* AI Red Team Dashboard - Custom Styles */
+/* Tailwind CSS is loaded via CDN, this file is for overrides */
+
+/* Severity badge colors */
+.severity-critical { background-color: #991b1b; color: white; }
+.severity-high { background-color: #c2410c; color: white; }
+.severity-medium { background-color: #ca8a04; color: white; }
+.severity-low { background-color: #16a34a; color: white; }
+.severity-info { background-color: #2563eb; color: white; }
+
+/* HTMX loading indicator */
+.htmx-indicator {
+    display: none;
+}
+
+.htmx-request .htmx-indicator {
+    display: inline;
+}
+
+.htmx-request.htmx-indicator {
+    display: inline;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #1f2937;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #4b5563;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #6b7280;
+}
