@@ -249,4 +249,4 @@ Based on OWASP ML Top 10, MITRE ATLAS, and NIST AI RMF:
 
 ## License
 
-MIT - See [LICENSE.md](LICENSE.md)
+CC - See [LICENSE.md](LICENSE.md)
