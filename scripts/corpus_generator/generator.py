@@ -5,6 +5,7 @@ LLM Exploitation Framework by d0sf3t
 Generates comprehensive attack payload corpus for manual testing
 """
 
+import re
 import json
 import hashlib
 from pathlib import Path
@@ -98,6 +99,10 @@ class TestCorpusGenerator:
         self.generated_hashes: Set[str] = set()
         self.test_id_counter = 0
         # Target for payload interpolation - empty string treated as None
+        if target:
+            # Sanitize target to prevent f-string / format injection.
+            # Allow word chars, spaces, dashes, underscores, dots, and common punctuation.
+            target = re.sub(r'[{}]', '', target)        # remove brace chars
         self.target = target if target else None
 
     def _interpolate_target(self, text: str) -> str:
