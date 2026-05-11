@@ -1,8 +1,27 @@
-# AI/ML Pentesting Framework Requirements
+# 0xPR0MPT — AI/ML Red-Team Corpus Generator
+#
+# INSTALLATION TIERS
+# ==================
+# Corpus generation only (stable surface — `corpus` and `report` subcommands):
+#   pip install requests
+#
+# Full install including experimental attack modules (`scan`, `supply-chain`):
+#   pip install -r requirements.txt
+#
+# Note: numpy is NOT required for corpus generation or report generation.
+# It is only needed by the experimental adversarial, model-extraction,
+# data-poisoning, and inference modules.
 
-# Core dependencies
-numpy>=1.20.0
-requests>=2.25.0
+# ---------------------------------------------------------------------------
+# Required for corpus generation and report generation (stable surface)
+# ---------------------------------------------------------------------------
+requests>=2.31.0,<3.0
+
+# ---------------------------------------------------------------------------
+# Required for experimental modules (adversarial, extraction, poisoning,
+# inference) — not needed for pure corpus generation
+# ---------------------------------------------------------------------------
+numpy>=1.24.0,<3.0
 
 # Optional: Advanced ML attacks (uncomment as needed)
 # torch>=1.10.0

@@ -128,6 +128,17 @@
 </div>
 
 <script>
+/**
+ * XSS-safe HTML escape helper (finding H-6).
+ * All user-derived corpus fields must be wrapped with esc() before being
+ * interpolated into innerHTML template literals.
+ */
+function esc(s) {
+    const d = document.createElement('div');
+    d.textContent = String(s ?? '');
+    return d.innerHTML;
+}
+
 // Handle API responses
 document.body.addEventListener('htmx:afterSwap', function(evt) {
     if (evt.detail.target.id === 'results') {
@@ -149,87 +160,90 @@ function renderResults(data) {
         return;
     }
 
+    // All user-derived fields are wrapped with esc() to prevent stored XSS (finding H-6).
     container.innerHTML = data.test_cases.map(tc => `
-        <div class="bg-gray-800 rounded-lg p-4 hover:bg-gray-750 cursor-pointer" onclick="showDetails('${tc.id}')">
+        <div class="bg-gray-800 rounded-lg p-4 hover:bg-gray-750 cursor-pointer" onclick="showDetails('${esc(tc.id)}')">
             <div class="flex justify-between items-start mb-2">
                 <div>
-                    <span class="font-mono text-xs text-gray-500">${tc.id}</span>
-                    <h3 class="font-semibold">${tc.name}</h3>
+                    <span class="font-mono text-xs text-gray-500">${esc(tc.id)}</span>
+                    <h3 class="font-semibold">${esc(tc.name)}</h3>
                 </div>
                 <div class="flex gap-2">
-                    <span class="px-2 py-1 rounded text-xs severity-${tc.severity}">${tc.severity.toUpperCase()}</span>
-                    <span class="px-2 py-1 rounded text-xs bg-gray-700">${tc.category}</span>
-                    <span class="px-2 py-1 rounded text-xs bg-blue-900">L${tc.complexity_level}</span>
+                    <span class="px-2 py-1 rounded text-xs severity-${esc(tc.severity)}">${esc(tc.severity).toUpperCase()}</span>
+                    <span class="px-2 py-1 rounded text-xs bg-gray-700">${esc(tc.category)}</span>
+                    <span class="px-2 py-1 rounded text-xs bg-blue-900">L${esc(tc.complexity_level)}</span>
                 </div>
             </div>
-            <p class="text-sm text-gray-400">${tc.description}</p>
+            <p class="text-sm text-gray-400">${esc(tc.description)}</p>
             ${tc.techniques_used && tc.techniques_used.length > 0 ? `
                 <div class="mt-2 flex flex-wrap gap-1">
-                    ${tc.techniques_used.map(t => `<span class="px-1 py-0.5 bg-gray-700 rounded text-xs">${t}</span>`).join('')}
+                    ${tc.techniques_used.map(t => `<span class="px-1 py-0.5 bg-gray-700 rounded text-xs">${esc(t)}</span>`).join('')}
                 </div>
             ` : ''}
             ${tc.payload_preview ? `
                 <div class="mt-2 p-2 bg-gray-900 rounded text-xs font-mono text-gray-400 truncate">
-                    ${tc.payload_preview.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
+                    ${esc(tc.payload_preview)}
                 </div>
             ` : ''}
             <div class="mt-2 flex gap-2">
-                <button onclick="event.stopPropagation(); copyPayload('${tc.id}')" class="text-xs text-blue-400 hover:text-blue-300">Copy Payload</button>
-                <button onclick="event.stopPropagation(); runTest('${tc.id}')" class="text-xs text-green-400 hover:text-green-300">Run Test</button>
+                <button onclick="event.stopPropagation(); copyPayload('${esc(tc.id)}')" class="text-xs text-blue-400 hover:text-blue-300">Copy Payload</button>
             </div>
         </div>
     `).join('');
 }
 
 async function showDetails(testId) {
-    const response = await fetch(`/api/corpus/${testId}`);
+    const response = await fetch(`/api/corpus/${encodeURIComponent(testId)}`);
     const tc = await response.json();
 
+    // modal-title uses textContent so no escaping needed there.
     document.getElementById('modal-title').textContent = tc.name;
+
+    // All corpus fields escaped via esc() before innerHTML insertion (finding H-6).
     document.getElementById('modal-content').innerHTML = `
         <div class="space-y-4">
             <div class="grid grid-cols-2 gap-4">
                 <div>
                     <label class="text-xs text-gray-400">ID</label>
-                    <div class="font-mono">${tc.id}</div>
+                    <div class="font-mono">${esc(tc.id)}</div>
                 </div>
                 <div>
                     <label class="text-xs text-gray-400">Category</label>
-                    <div>${tc.category}</div>
+                    <div>${esc(tc.category)}</div>
                 </div>
                 <div>
                     <label class="text-xs text-gray-400">Severity</label>
-                    <div><span class="px-2 py-1 rounded severity-${tc.severity}">${tc.severity.toUpperCase()}</span></div>
+                    <div><span class="px-2 py-1 rounded severity-${esc(tc.severity)}">${esc(tc.severity).toUpperCase()}</span></div>
                 </div>
                 <div>
                     <label class="text-xs text-gray-400">Complexity</label>
-                    <div>Level ${tc.complexity_level}</div>
+                    <div>Level ${esc(tc.complexity_level)}</div>
                 </div>
             </div>
 
             <div>
                 <label class="text-xs text-gray-400">Description</label>
-                <div class="bg-gray-900 p-3 rounded">${tc.description}</div>
+                <div class="bg-gray-900 p-3 rounded">${esc(tc.description)}</div>
             </div>
 
             <div>
                 <label class="text-xs text-gray-400">Payload</label>
-                <pre class="bg-gray-900 p-3 rounded text-sm overflow-x-auto whitespace-pre-wrap">${tc.payload.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
-                <button onclick="copyToClipboard(\`${tc.payload.replace(/`/g, '\\`').replace(/\\/g, '\\\\')}\`)" class="mt-2 bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-sm">
+                <pre class="bg-gray-900 p-3 rounded text-sm overflow-x-auto whitespace-pre-wrap">${esc(tc.payload)}</pre>
+                <button id="copy-payload-btn" class="mt-2 bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded text-sm">
                     Copy Payload
                 </button>
             </div>
 
             <div>
                 <label class="text-xs text-gray-400">Expected Behavior</label>
-                <div class="bg-gray-900 p-3 rounded">${tc.expected_behavior}</div>
+                <div class="bg-gray-900 p-3 rounded">${esc(tc.expected_behavior)}</div>
             </div>
 
             ${tc.success_indicators && tc.success_indicators.length > 0 ? `
                 <div>
                     <label class="text-xs text-gray-400">Success Indicators</label>
                     <div class="flex flex-wrap gap-2">
-                        ${tc.success_indicators.map(i => `<span class="px-2 py-1 bg-red-900 rounded text-sm">${i}</span>`).join('')}
+                        ${tc.success_indicators.map(i => `<span class="px-2 py-1 bg-red-900 rounded text-sm">${esc(i)}</span>`).join('')}
                     </div>
                 </div>
             ` : ''}
@@ -238,7 +252,7 @@ async function showDetails(testId) {
                 <div>
                     <label class="text-xs text-gray-400">Techniques Used</label>
                     <div class="flex flex-wrap gap-2">
-                        ${tc.techniques_used.map(t => `<span class="px-2 py-1 bg-purple-900 rounded text-sm">${t}</span>`).join('')}
+                        ${tc.techniques_used.map(t => `<span class="px-2 py-1 bg-purple-900 rounded text-sm">${esc(t)}</span>`).join('')}
                     </div>
                 </div>
             ` : ''}
@@ -247,7 +261,7 @@ async function showDetails(testId) {
                 <div>
                     <label class="text-xs text-gray-400">Target Models</label>
                     <div class="flex flex-wrap gap-2">
-                        ${tc.target_models.map(m => `<span class="px-2 py-1 bg-green-900 rounded text-sm">${m}</span>`).join('')}
+                        ${tc.target_models.map(m => `<span class="px-2 py-1 bg-green-900 rounded text-sm">${esc(m)}</span>`).join('')}
                     </div>
                 </div>
             ` : ''}
@@ -255,11 +269,19 @@ async function showDetails(testId) {
             ${tc.research_source ? `
                 <div>
                     <label class="text-xs text-gray-400">Research Source</label>
-                    <div>${tc.research_source}</div>
+                    <div>${esc(tc.research_source)}</div>
                 </div>
             ` : ''}
         </div>
     `;
+
+    // Wire up payload copy button using a closure over tc.payload (never injected into HTML).
+    const copyBtn = document.getElementById('copy-payload-btn');
+    if (copyBtn) {
+        copyBtn.addEventListener('click', function() {
+            copyToClipboard(tc.payload);
+        });
+    }
 
     document.getElementById('modal').classList.remove('hidden');
 }
@@ -318,10 +340,6 @@ function copyToClipboard(text) {
     } else {
         fallbackCopy(text);
     }
-}
-
-function runTest(testId) {
-    window.location.href = `/executor?test=${testId}`;
 }
 
 // Close modal on escape

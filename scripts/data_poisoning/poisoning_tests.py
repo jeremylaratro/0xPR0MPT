@@ -21,6 +21,11 @@ from scripts.utils.base import (
     Severity, AttackCategory
 )
 
+_EXPERIMENTAL_BANNER = (
+    "EXPERIMENTAL MODULE: results from this module are research-scaffold "
+    "outputs, not production measurements. See docs/APP-REVIEW-FINDINGS-11MAY2026.md."
+)
+
 
 class PoisonType(Enum):
     LABEL_FLIP = "label_flip"
@@ -65,6 +70,7 @@ class DataPoisoningModule(TestModule):
         config: Optional[Dict] = None
     ):
         super().__init__(target, output_dir, config)
+        self.logger.warning(_EXPERIMENTAL_BANNER)
 
         self.num_classes = config.get('num_classes', 10)
         self.input_shape = config.get('input_shape', (3, 224, 224))
@@ -274,8 +280,8 @@ class DataPoisoningModule(TestModule):
                 id=self.generate_finding_id(),
                 title="Model Susceptible to Backdoor Poisoning",
                 category=AttackCategory.DATA_POISONING,
-                severity=Severity.HIGH,
-                description="Backdoor poisoning attack is feasible. Generated sample poison data for demonstration.",
+                severity=Severity.INFO,
+                description="Feasibility assessment only: backdoor poisoning is theoretically applicable to this model interface. No backdoor was actually injected or confirmed — this is a research-scaffold statement, not a detection result. Sample poison data was generated for inspection.",
                 evidence=assessment.evidence,
                 remediation="Implement trigger detection, pruning, and fine-tuning defenses."
             ))
@@ -285,7 +291,7 @@ class DataPoisoningModule(TestModule):
         return TestResult(
             test_name="BackdoorAssessment",
             success=True,
-            attack_succeeded=True,  # Backdoor is always theoretically feasible
+            attack_succeeded=behavior_change > 0.5,  # Only True if observed behavior change exceeds threshold
             metrics={
                 "behavior_change_with_trigger": behavior_change,
                 "possibly_backdoored": already_backdoored,

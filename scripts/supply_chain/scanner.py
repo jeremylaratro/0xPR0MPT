@@ -23,6 +23,11 @@ from scripts.utils.base import (
     Severity, AttackCategory
 )
 
+_EXPERIMENTAL_BANNER = (
+    "EXPERIMENTAL MODULE: results from this module are research-scaffold "
+    "outputs, not production measurements. See docs/APP-REVIEW-FINDINGS-11MAY2026.md."
+)
+
 
 class DependencyType(Enum):
     PYTHON = "python"
@@ -85,6 +90,7 @@ class SupplyChainScanner(TestModule):
 
         import logging
         self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.warning(_EXPERIMENTAL_BANNER)
 
     def run_tests(self) -> List[TestResult]:
         """Execute all supply chain security scans"""
@@ -355,6 +361,7 @@ class SupplyChainScanner(TestModule):
                        list(self.scan_path.glob('**/*.pt')) + \
                        list(self.scan_path.glob('**/*.pth'))
 
+        # TODO(security): replace with pickletools.genops walk — see finding M-16
         malicious_patterns = [
             (rb'exec\s*\(', 'exec() call'),
             (rb'eval\s*\(', 'eval() call'),
@@ -525,7 +532,7 @@ class SupplyChainScanner(TestModule):
                 })
 
         # Always flag models that don't specify revision/commit
-        unversioned = [m for m in model_refs if '@' not in m and 'revision=' not in str(model_refs)]
+        unversioned = [m for m in model_refs if '@' not in m and 'revision=' not in m]
 
         if unversioned:
             self._add_finding(Finding(
@@ -716,6 +723,7 @@ class SupplyChainScanner(TestModule):
                 size = len(content)
 
             # Check for code execution patterns
+            # TODO(security): replace with pickletools.genops walk — see finding M-16
             patterns = [
                 (rb'__reduce__', 'Custom pickle reduce'),
                 (rb'exec\(', 'exec() call'),
