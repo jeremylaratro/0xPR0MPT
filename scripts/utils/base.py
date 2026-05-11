@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-AI/ML Pentesting Framework - Base Utilities
-Core infrastructure for all testing modules
+0xPR0MPT — AI/ML Red-Team Corpus Generator
+Base utilities: core infrastructure shared by all testing modules.
 """
 
 import json
@@ -166,7 +166,8 @@ class LLMInterface(ModelInterface):
         model_name: str = "unknown",
         headers: Optional[Dict[str, str]] = None,
         rate_limit: float = 1.0,
-        timeout: int = 60
+        timeout: int = 60,
+        max_history_turns: int = 20
     ):
         self.endpoint = endpoint
         self.api_key = api_key
@@ -174,6 +175,7 @@ class LLMInterface(ModelInterface):
         self.headers = headers or {}
         self.rate_limit = rate_limit
         self.timeout = timeout
+        self.max_history_turns = max_history_turns
         self.query_count = 0
         self.last_query_time = 0
         self.conversation_history: List[Dict] = []
@@ -215,6 +217,10 @@ class LLMInterface(ModelInterface):
             messages.append({"role": "system", "content": system_prompt})
 
         if include_history:
+            # Trim history before use to prevent unbounded context-window growth.
+            if self.max_history_turns and len(self.conversation_history) > self.max_history_turns * 2:
+                # Keep last N turns (each turn = 2 entries: user + assistant)
+                self.conversation_history = self.conversation_history[-self.max_history_turns * 2:]
             messages.extend(self.conversation_history)
 
         messages.append({"role": "user", "content": message})
@@ -276,11 +282,12 @@ class TestModule(ABC):
         self._setup_logging()
 
     def _setup_logging(self):
+        # Avoid duplicate handlers when modules are instantiated multiple times.
+        if any(isinstance(h, logging.FileHandler) for h in self.logger.handlers):
+            return
         log_file = self.output_dir / f"{self.__class__.__name__}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
         handler = logging.FileHandler(log_file)
-        handler.setFormatter(logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        ))
+        handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
         self.logger.addHandler(handler)
         self.logger.setLevel(logging.DEBUG)
 
