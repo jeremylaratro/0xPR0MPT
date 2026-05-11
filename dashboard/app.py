@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """
-0xPrompt - LLM Exploitation Framework by d0sf3t
-Web console for AI/ML red teaming with OWASP LLM Top 10 filters
+0xPrompt - AI/ML Red-Team Corpus Generator
+Web dashboard for corpus browse, filter, and export.
 """
 
-import asyncio
+import argparse
+import csv
+import functools
+import io
 import json
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 from datetime import datetime
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, HTTPException, Form
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi import FastAPI, Request, HTTPException, Form, Depends
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -26,7 +29,7 @@ from scripts.corpus_generator.generator import TestCorpusGenerator as CorpusGene
 # Initialize FastAPI app
 app = FastAPI(
     title="0xPrompt",
-    description="LLM Exploitation Framework by d0sf3t",
+    description="AI/ML Red-Team Corpus Generator — corpus browser only",
     version="1.0.0"
 )
 
@@ -52,8 +55,9 @@ OWASP_LLM_TOP_10 = {
 # Target Models
 TARGET_MODELS = ["all", "gpt-4", "gpt-4o", "claude-3", "llama-3", "gemini", "mistral"]
 
-# Active WebSocket connections
-active_connections: List[WebSocket] = []
+# Module-level cache for the most-recently generated target-interpolated corpus.
+# None means "use the default corpus from lru_cache".
+_last_generated_corpus: Optional[List] = None
 
 
 # =============================================================================
@@ -72,13 +76,66 @@ class CorpusFilterRequest(BaseModel):
 class GenerateRequest(BaseModel):
     categories: Optional[List[str]] = None
     count: Optional[int] = None
-    target: Optional[str] = None  # Target for payload interpolation (e.g., "User ID 02")
+    target: Optional[str] = None  # Target for payload interpolation
 
 
-class TestExecuteRequest(BaseModel):
-    test_ids: List[str]
-    target_endpoint: str
-    api_key: Optional[str] = None
+# =============================================================================
+# Security helpers
+# =============================================================================
+
+def _require_xhr(request: Request):
+    """
+    CSRF mitigation (finding M-7): require X-Requested-With: XMLHttpRequest on
+    state-changing POST endpoints.  HTMX sends this header automatically.
+    Plain HTML <form> submissions from a cross-origin page cannot set custom
+    headers, so this blocks form-based CSRF without needing a token cookie.
+    """
+    if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+        raise HTTPException(
+            status_code=403,
+            detail="X-Requested-With: XMLHttpRequest header required"
+        )
+
+
+def _csv_safe(v) -> str:
+    """
+    CSV formula-injection guard (finding M-9).
+    Prefix cells that start with a formula trigger character with a single quote
+    so spreadsheet applications do not interpret them as formulas.
+    """
+    s = str(v)
+    if s and s[0] in ('=', '+', '-', '@', '\t', '\r'):
+        return "'" + s
+    return s
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+@functools.lru_cache(maxsize=1)
+def get_all_test_cases():
+    """
+    Get flattened list of all test cases from the default corpus generator.
+    Result is cached (finding M-10); call get_all_test_cases.cache_clear() to
+    invalidate after an explicit regenerate.
+    """
+    generator = CorpusGenerator()
+    output = generator.generate_all()
+    all_cases = []
+    for cases in output.categories.values():
+        all_cases.extend(cases)
+    return all_cases
+
+
+def _get_active_corpus() -> List:
+    """
+    Return the most-recently generated target corpus if available (finding M-11),
+    otherwise fall back to the cached default corpus.
+    """
+    if _last_generated_corpus is not None:
+        return _last_generated_corpus
+    return get_all_test_cases()
 
 
 # =============================================================================
@@ -118,7 +175,7 @@ async def generator_page(request: Request):
 
 @app.get("/executor", response_class=HTMLResponse)
 async def executor_page(request: Request):
-    """Test execution page"""
+    """Executor placeholder page — live execution is future work"""
     return templates.TemplateResponse("executor.html", {
         "request": request,
     })
@@ -131,27 +188,13 @@ async def health_check():
 
 
 # =============================================================================
-# Helper Functions
-# =============================================================================
-
-def get_all_test_cases():
-    """Get flattened list of all test cases from generator"""
-    generator = CorpusGenerator()
-    output = generator.generate_all()
-    all_cases = []
-    for cases in output.categories.values():
-        all_cases.extend(cases)
-    return all_cases
-
-
-# =============================================================================
 # Routes - API
 # =============================================================================
 
 @app.get("/api/corpus")
 async def list_corpus():
     """List all test cases"""
-    corpus = get_all_test_cases()
+    corpus = _get_active_corpus()
 
     return {
         "count": len(corpus),
@@ -173,15 +216,17 @@ async def list_corpus():
 
 @app.post("/api/corpus/filter")
 async def filter_corpus(
+    request: Request,
     owasp: str = Form(default=""),
     category: str = Form(default=""),
     severity: str = Form(default=""),
     model: str = Form(default=""),
     complexity: str = Form(default=""),
     search: str = Form(default=""),
+    _xhr=Depends(_require_xhr),
 ):
-    """Filter test cases (accepts form data from HTMX)"""
-    corpus = get_all_test_cases()
+    """Filter test cases (accepts form data from HTMX) — requires XHR header (M-7)"""
+    corpus = _get_active_corpus()
     filtered = corpus
 
     # Apply OWASP filter
@@ -243,7 +288,7 @@ async def filter_corpus(
 @app.get("/api/corpus/{test_id}")
 async def get_test_case(test_id: str):
     """Get single test case by ID"""
-    corpus = get_all_test_cases()
+    corpus = _get_active_corpus()
 
     for tc in corpus:
         if tc.id == test_id:
@@ -268,11 +313,17 @@ async def get_test_case(test_id: str):
 
 
 @app.post("/api/corpus/generate")
-async def generate_corpus(gen_req: GenerateRequest):
-    """Generate new corpus with optional target interpolation and category filtering"""
+async def generate_corpus(gen_req: GenerateRequest, _xhr=Depends(_require_xhr)):
+    """
+    Generate new corpus with optional target interpolation and category filtering.
+    The generated corpus is stored in the module-level cache so that subsequent
+    export and filter requests serve the same targeted corpus (finding M-11).
+    Requires XHR header (M-7).
+    """
+    global _last_generated_corpus
+
     # Normalize empty string to None
     target = gen_req.target if gen_req.target else None
-    # Pass target to generator for payload interpolation
     generator = CorpusGenerator(target=target)
     output = generator.generate_all()
 
@@ -285,43 +336,96 @@ async def generate_corpus(gen_req: GenerateRequest):
     else:
         filtered_categories = output.categories
 
-    # Count test cases from filtered output
-    total_count = sum(len(cases) for cases in filtered_categories.values())
+    # Flatten and persist the target-interpolated corpus (finding M-11)
+    all_cases = []
+    for cases in filtered_categories.values():
+        all_cases.extend(cases)
+    _last_generated_corpus = all_cases
+
+    # Also clear the default lru_cache so a follow-up /api/corpus (no target)
+    # will regenerate fresh rather than serving a stale default (finding M-10)
+    get_all_test_cases.cache_clear()
+
+    total_count = len(all_cases)
 
     return {
         "success": True,
         "count": total_count,
-        "target": target,  # Return normalized target (None if empty)
+        "target": target,
         "categories": {
             cat: len(cases) for cat, cases in filtered_categories.items()
         }
     }
 
 
+@app.post("/api/corpus/regenerate")
+async def regenerate_corpus():
+    """
+    Clear the corpus cache and force regeneration on next request (finding M-10).
+    Also discards any previously generated target corpus.
+    """
+    global _last_generated_corpus
+    get_all_test_cases.cache_clear()
+    _last_generated_corpus = None
+    return {"ok": True}
+
+
 @app.get("/api/export/{format}")
 async def export_corpus(format: str):
-    """Export corpus in specified format"""
-    corpus = get_all_test_cases()
+    """Export corpus as a real file download (finding L-10)"""
+    corpus = _get_active_corpus()
 
     if format == "json":
-        import json as json_lib
-        data = [{"id": tc.id, "name": tc.name, "category": tc.category.value,
-                 "severity": tc.severity.value, "payload": tc.payload} for tc in corpus]
-        return JSONResponse(content=data)
-    elif format == "md" or format == "markdown":
+        data = [
+            {
+                "id": tc.id,
+                "name": tc.name,
+                "category": tc.category.value,
+                "severity": tc.severity.value,
+                "payload": tc.payload,
+            }
+            for tc in corpus
+        ]
+        return JSONResponse(
+            content=data,
+            headers={"Content-Disposition": "attachment; filename=corpus.json"},
+        )
+
+    elif format in ("md", "markdown"):
         md_content = "# 0xPrompt Test Corpus\n\n"
         for tc in corpus:
-            md_content += f"## {tc.name}\n- **ID**: {tc.id}\n- **Category**: {tc.category.value}\n- **Severity**: {tc.severity.value}\n\n"
-        return JSONResponse(content={"markdown": md_content})
+            md_content += (
+                f"## {tc.name}\n"
+                f"- **ID**: {tc.id}\n"
+                f"- **Category**: {tc.category.value}\n"
+                f"- **Severity**: {tc.severity.value}\n\n"
+            )
+        return Response(
+            content=md_content,
+            media_type="text/markdown",
+            headers={"Content-Disposition": "attachment; filename=corpus.md"},
+        )
+
     elif format == "csv":
-        import csv
-        import io
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(["ID", "Name", "Category", "Severity", "Description", "Payload"])
         for tc in corpus:
-            writer.writerow([tc.id, tc.name, tc.category.value, tc.severity.value, tc.description[:100], tc.payload[:200]])
-        return JSONResponse(content={"csv": output.getvalue()})
+            # Guard against CSV formula injection (finding M-9)
+            writer.writerow([
+                _csv_safe(tc.id),
+                _csv_safe(tc.name),
+                _csv_safe(tc.category.value),
+                _csv_safe(tc.severity.value),
+                _csv_safe(tc.description[:100]),
+                _csv_safe(tc.payload[:200]),
+            ])
+        return Response(
+            content=output.getvalue(),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=corpus.csv"},
+        )
+
     else:
         raise HTTPException(status_code=400, detail="Invalid format. Use: json, md, csv")
 
@@ -329,7 +433,7 @@ async def export_corpus(format: str):
 @app.get("/api/stats")
 async def get_stats():
     """Get corpus statistics"""
-    corpus = get_all_test_cases()
+    corpus = _get_active_corpus()
 
     return {
         "total_test_cases": len(corpus),
@@ -356,75 +460,28 @@ async def get_stats():
 
 
 # =============================================================================
-# WebSocket - Real-time Test Results
-# =============================================================================
-
-@app.websocket("/ws/results/{job_id}")
-async def websocket_results(websocket: WebSocket, job_id: str):
-    """WebSocket for real-time test results"""
-    await websocket.accept()
-    active_connections.append(websocket)
-
-    try:
-        # Send initial connection message
-        await websocket.send_json({
-            "type": "connected",
-            "job_id": job_id,
-            "timestamp": datetime.utcnow().isoformat()
-        })
-
-        # Keep connection alive and handle messages
-        while True:
-            data = await websocket.receive_text()
-            message = json.loads(data)
-
-            if message.get("type") == "ping":
-                await websocket.send_json({"type": "pong"})
-            elif message.get("type") == "start_test":
-                # Simulate test execution
-                await simulate_test_execution(websocket, message.get("test_ids", []))
-
-    except WebSocketDisconnect:
-        active_connections.remove(websocket)
-
-
-async def simulate_test_execution(websocket: WebSocket, test_ids: List[str]):
-    """Simulate test execution and send results"""
-    corpus = get_all_test_cases()
-
-    tests_to_run = [tc for tc in corpus if tc.id in test_ids] if test_ids else corpus[:10]
-
-    await websocket.send_json({
-        "type": "execution_started",
-        "total_tests": len(tests_to_run)
-    })
-
-    for i, tc in enumerate(tests_to_run):
-        # Simulate execution delay
-        await asyncio.sleep(0.5)
-
-        # Send result
-        await websocket.send_json({
-            "type": "test_result",
-            "test_name": tc.name,
-            "test_id": tc.id,
-            "success": True,
-            "attack_succeeded": i % 3 == 0,  # Simulate 1/3 success rate
-            "duration": 0.5,
-            "progress": (i + 1) / len(tests_to_run)
-        })
-
-    await websocket.send_json({
-        "type": "execution_complete",
-        "total_tests": len(tests_to_run),
-        "timestamp": datetime.utcnow().isoformat()
-    })
-
-
-# =============================================================================
 # Main
 # =============================================================================
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    parser = argparse.ArgumentParser(description="0xPrompt corpus dashboard")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind to (default: 127.0.0.1). Use 0.0.0.0 only on trusted networks.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to listen on (default: 8000)",
+    )
+    args = parser.parse_args()
+
+    print(
+        f"Dashboard listening on http://{args.host}:{args.port} — "
+        "corpus browser only. Bind to 0.0.0.0 only on trusted networks."
+    )
+    uvicorn.run(app, host=args.host, port=args.port)

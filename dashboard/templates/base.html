@@ -5,11 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}0xPrompt{% endblock %}</title>
 
-    <!-- Tailwind CSS CDN -->
+    <!--
+        CDN dependency note (finding M-12):
+        - Tailwind Play CDN (cdn.tailwindcss.com) dynamically compiles CSS at runtime and
+          returns different bytes on each request, so SRI cannot be applied to it.
+          For production deployments, replace with a compiled Tailwind build pipeline
+          (e.g. `npx tailwindcss -o static/tailwind.css`) and serve from /static/.
+        - HTMX 1.9.10 is pinned by version in the URL; SRI hash verified via:
+              curl -sL https://unpkg.com/htmx.org@1.9.10/dist/htmx.min.js \
+                | openssl dgst -sha384 -binary | openssl base64 -A
+    -->
+    <!-- Tailwind CSS CDN (Play CDN — not SRI-compatible; replace with build pipeline for production) -->
     <script src="https://cdn.tailwindcss.com"></script>
 
-    <!-- HTMX -->
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <!-- HTMX 1.9.10 with SRI integrity -->
+    <script src="https://unpkg.com/htmx.org@1.9.10/dist/htmx.min.js"
+            integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC"
+            crossorigin="anonymous"></script>
 
     <!-- Custom styles -->
     <style>
@@ -42,7 +54,7 @@
                     <a href="/" class="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 {% block nav_home %}{% endblock %}">Dashboard</a>
                     <a href="/corpus" class="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 {% block nav_corpus %}{% endblock %}">Corpus</a>
                     <a href="/generator" class="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 {% block nav_generator %}{% endblock %}">Generator</a>
-                    <a href="/executor" class="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 {% block nav_executor %}{% endblock %}">Executor</a>
+                    <a href="/executor" class="px-3 py-2 rounded-md text-sm font-medium hover:bg-gray-700 {% block nav_executor %}{% endblock %}">Executor <span class="text-xs text-yellow-400">(coming soon)</span></a>
                 </div>
             </div>
         </div>
