@@ -19,6 +19,18 @@ from scripts.corpus_generator.generator import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Module-scoped fixture (finding L-16): generate_all() once per test session
+# rather than once per test method, which cuts the ~807 s runtime to one run.
+# Tests that use a specific target= arg must not use this fixture.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def corpus_output() -> CorpusOutput:
+    """Generate the full default corpus once for the entire test module."""
+    return TestCorpusGenerator().generate_all()
+
+
 class TestCorpusGeneratorInitialization:
     """Tests for generator initialization"""
 
@@ -46,14 +58,11 @@ class TestCorpusGeneratorInitialization:
 class TestRobustPayloads:
     """Tests for robust payload generation (WS-1)"""
 
-    def test_robust_payloads_generated(self):
+    def test_robust_payloads_generated(self, corpus_output):
         """Verify robust payloads are generated"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
-
         # Flatten all test cases
         all_cases = []
-        for cases in output.categories.values():
+        for cases in corpus_output.categories.values():
             all_cases.extend(cases)
 
         # Find robust payloads by complexity
@@ -64,13 +73,10 @@ class TestRobustPayloads:
 
         assert len(robust_payloads) >= 5, f"Expected at least 5 robust payloads, got {len(robust_payloads)}"
 
-    def test_robust_payloads_length(self):
+    def test_robust_payloads_length(self, corpus_output):
         """Verify robust payloads are 100+ characters"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
-
         all_cases = []
-        for cases in output.categories.values():
+        for cases in corpus_output.categories.values():
             all_cases.extend(cases)
 
         robust_payloads = [tc for tc in all_cases if tc.complexity_level >= 4]
@@ -78,13 +84,10 @@ class TestRobustPayloads:
         for tc in robust_payloads:
             assert len(tc.payload) >= 100, f"Robust payload '{tc.name}' is only {len(tc.payload)} chars"
 
-    def test_complexity_level_field_exists(self):
+    def test_complexity_level_field_exists(self, corpus_output):
         """Verify complexity_level field is populated"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
-
         all_cases = []
-        for cases in output.categories.values():
+        for cases in corpus_output.categories.values():
             all_cases.extend(cases)
 
         for tc in all_cases:
@@ -95,35 +98,26 @@ class TestRobustPayloads:
 class TestCombinationAttacks:
     """Tests for combination attack chains (WS-2)"""
 
-    def test_combination_attacks_generated(self):
+    def test_combination_attacks_generated(self, corpus_output):
         """Verify combination attacks are in corpus"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
-
         combo_key = TaxonomyCategory.COMBINATION_ATTACKS.value
-        combo_attacks = output.categories.get(combo_key, [])
+        combo_attacks = corpus_output.categories.get(combo_key, [])
 
         assert len(combo_attacks) >= 5, f"Expected 5+ combination attacks, got {len(combo_attacks)}"
 
-    def test_combination_chain_metadata(self):
+    def test_combination_chain_metadata(self, corpus_output):
         """Verify combination chains have technique list"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
-
         combo_key = TaxonomyCategory.COMBINATION_ATTACKS.value
-        combo_attacks = output.categories.get(combo_key, [])
+        combo_attacks = corpus_output.categories.get(combo_key, [])
 
         for tc in combo_attacks:
             assert hasattr(tc, 'techniques_used')
             assert len(tc.techniques_used) >= 2, f"Combo '{tc.name}' should combine 2+ techniques"
 
-    def test_combination_chain_sequence(self):
+    def test_combination_chain_sequence(self, corpus_output):
         """Verify combination chains have sequence order"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
-
         combo_key = TaxonomyCategory.COMBINATION_ATTACKS.value
-        combo_attacks = output.categories.get(combo_key, [])
+        combo_attacks = corpus_output.categories.get(combo_key, [])
 
         for tc in combo_attacks:
             assert hasattr(tc, 'chain_sequence')
@@ -133,24 +127,18 @@ class TestCombinationAttacks:
 class TestJailbreakResearch:
     """Tests for 2024-2026 jailbreak research integration (WS-3)"""
 
-    def test_jailbreak_coverage(self):
+    def test_jailbreak_coverage(self, corpus_output):
         """Verify all research categories present"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
-
         jailbreak_key = TaxonomyCategory.JAILBREAK.value
-        jailbreaks = output.categories.get(jailbreak_key, [])
+        jailbreaks = corpus_output.categories.get(jailbreak_key, [])
 
         # Should have at least 15 jailbreak payloads
         assert len(jailbreaks) >= 15, f"Expected 15+ jailbreaks, got {len(jailbreaks)}"
 
-    def test_research_techniques_covered(self):
+    def test_research_techniques_covered(self, corpus_output):
         """Verify 2024-2026 research techniques are included"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
-
         jailbreak_key = TaxonomyCategory.JAILBREAK.value
-        jailbreaks = output.categories.get(jailbreak_key, [])
+        jailbreaks = corpus_output.categories.get(jailbreak_key, [])
 
         # Check for key research techniques
         research_keywords = [
@@ -169,13 +157,10 @@ class TestJailbreakResearch:
 
         assert len(found_techniques) >= 3, f"Expected 3+ research techniques, found: {found_techniques}"
 
-    def test_research_source_metadata(self):
+    def test_research_source_metadata(self, corpus_output):
         """Verify research payloads have source attribution"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
-
         all_cases = []
-        for cases in output.categories.values():
+        for cases in corpus_output.categories.values():
             all_cases.extend(cases)
 
         # Find payloads with research_source
@@ -186,13 +171,10 @@ class TestJailbreakResearch:
 
         assert len(research_attributed) >= 3, "Expected 3+ payloads with research attribution"
 
-    def test_model_specific_attacks(self):
+    def test_model_specific_attacks(self, corpus_output):
         """Verify model-specific attack variants exist"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
-
         all_cases = []
-        for cases in output.categories.values():
+        for cases in corpus_output.categories.values():
             all_cases.extend(cases)
 
         # Find payloads with target_models
@@ -207,32 +189,23 @@ class TestJailbreakResearch:
 class TestCorpusOutput:
     """Tests for corpus export and output"""
 
-    def test_corpus_total_count(self):
+    def test_corpus_total_count(self, corpus_output):
         """Verify 100+ test cases generated"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
-
-        total = output.total_count()
+        total = corpus_output.total_count()
         # Should have at least 100 test cases
         assert total >= 100, f"Expected 100+ test cases, got {total}"
 
-    def test_corpus_output_structure(self):
+    def test_corpus_output_structure(self, corpus_output):
         """Verify CorpusOutput has correct structure"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
+        assert hasattr(corpus_output, 'metadata')
+        assert hasattr(corpus_output, 'categories')
+        assert hasattr(corpus_output, 'statistics')
+        assert isinstance(corpus_output.categories, dict)
 
-        assert hasattr(output, 'metadata')
-        assert hasattr(output, 'categories')
-        assert hasattr(output, 'statistics')
-        assert isinstance(output.categories, dict)
-
-    def test_unique_ids(self):
+    def test_unique_ids(self, corpus_output):
         """Verify all test case IDs are unique"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
-
         all_ids = []
-        for cases in output.categories.values():
+        for cases in corpus_output.categories.values():
             for tc in cases:
                 all_ids.append(tc.id)
 
@@ -242,11 +215,8 @@ class TestCorpusOutput:
 class TestBackwardCompatibility:
     """Tests ensuring backward compatibility"""
 
-    def test_existing_categories_preserved(self):
+    def test_existing_categories_preserved(self, corpus_output):
         """Verify original categories still work"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
-
         original_categories = [
             TaxonomyCategory.PROMPT_INJECTION,
             TaxonomyCategory.JAILBREAK,
@@ -257,17 +227,14 @@ class TestBackwardCompatibility:
         ]
 
         for cat in original_categories:
-            cat_cases = output.categories.get(cat.value, [])
+            cat_cases = corpus_output.categories.get(cat.value, [])
             assert len(cat_cases) >= 3, f"Category {cat.value} should have 3+ cases"
 
-    def test_test_case_dataclass_fields(self):
+    def test_test_case_dataclass_fields(self, corpus_output):
         """Verify TestCase has all expected fields"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
-
         # Get first test case
-        first_cat = list(output.categories.keys())[0]
-        tc = output.categories[first_cat][0]
+        first_cat = list(corpus_output.categories.keys())[0]
+        tc = corpus_output.categories[first_cat][0]
 
         # Original required fields
         required_original = ["id", "name", "description", "category", "payload", "expected_behavior"]
@@ -283,13 +250,10 @@ class TestBackwardCompatibility:
 class TestPayloadQuality:
     """Tests for payload quality and content"""
 
-    def test_no_duplicate_payloads(self):
+    def test_no_duplicate_payloads(self, corpus_output):
         """Verify no exact duplicate payloads exist"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
-
         all_payloads = []
-        for cases in output.categories.values():
+        for cases in corpus_output.categories.values():
             for tc in cases:
                 all_payloads.append(tc.payload)
 
@@ -299,22 +263,16 @@ class TestPayloadQuality:
         dup_count = len(all_payloads) - len(unique_payloads)
         assert dup_count < 5, f"Found {dup_count} duplicate payloads"
 
-    def test_payloads_are_non_empty(self):
+    def test_payloads_are_non_empty(self, corpus_output):
         """Verify all payloads have content"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
-
-        for cases in output.categories.values():
+        for cases in corpus_output.categories.values():
             for tc in cases:
                 assert len(tc.payload.strip()) > 0, f"Empty payload in {tc.name}"
 
-    def test_severity_distribution(self):
+    def test_severity_distribution(self, corpus_output):
         """Verify mix of severity levels"""
-        generator = TestCorpusGenerator()
-        output = generator.generate_all()
-
         all_severities = []
-        for cases in output.categories.values():
+        for cases in corpus_output.categories.values():
             for tc in cases:
                 all_severities.append(tc.severity.value)
 
