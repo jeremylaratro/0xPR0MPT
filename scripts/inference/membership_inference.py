@@ -19,6 +19,11 @@ from scripts.utils.base import (
     Severity, AttackCategory
 )
 
+_EXPERIMENTAL_BANNER = (
+    "EXPERIMENTAL MODULE: results from this module are research-scaffold "
+    "outputs, not production measurements. See docs/APP-REVIEW-FINDINGS-11MAY2026.md."
+)
+
 
 @dataclass
 class MembershipResult:
@@ -43,6 +48,7 @@ class MembershipInferenceModule(TestModule):
         config: Optional[Dict] = None
     ):
         super().__init__(target, output_dir, config)
+        self.logger.warning(_EXPERIMENTAL_BANNER)
 
         self.num_classes = config.get('num_classes', 10)
         self.input_shape = config.get('input_shape', (3, 224, 224))
@@ -161,13 +167,15 @@ class MembershipInferenceModule(TestModule):
         duration = time.time() - start_time
 
         if best_accuracy > 0.6:
+            evidence = asdict(result)
+            evidence["measurement_type"] = "heuristic"
             self.add_finding(Finding(
                 id=self.generate_finding_id(),
                 title="Membership Inference Vulnerability (Threshold Attack)",
                 category=AttackCategory.MEMBERSHIP_INFERENCE,
-                severity=Severity.MEDIUM if best_accuracy < 0.7 else Severity.HIGH,
-                description=f"Model is vulnerable to membership inference with {best_accuracy*100:.1f}% accuracy (advantage: {advantage*100:.1f}%)",
-                evidence=asdict(result),
+                severity=Severity.INFO,
+                description=f"Heuristic estimate: threshold attack achieves {best_accuracy*100:.1f}% accuracy (advantage: {advantage*100:.1f}%) on synthetic membership labels assigned by list index — membership labels are not derived from real training data; this is a research-scaffold estimate, not a real attack result.",
+                evidence=evidence,
                 remediation="Implement differential privacy, output perturbation, or regularization techniques."
             ))
 
@@ -264,13 +272,15 @@ class MembershipInferenceModule(TestModule):
         duration = time.time() - start_time
 
         if accuracy > 0.6:
+            evidence = asdict(result)
+            evidence["measurement_type"] = "heuristic"
             self.add_finding(Finding(
                 id=self.generate_finding_id(),
                 title="Membership Inference Vulnerability (Shadow Model)",
                 category=AttackCategory.MEMBERSHIP_INFERENCE,
-                severity=Severity.HIGH,
-                description=f"Shadow model attack achieves {accuracy*100:.1f}% accuracy",
-                evidence=asdict(result),
+                severity=Severity.INFO,
+                description=f"Heuristic estimate: shadow model attack achieves {accuracy*100:.1f}% accuracy on synthetic membership labels assigned by list index — no shadow model was trained and membership labels are not derived from real training data; this is a research-scaffold estimate, not a real attack result.",
+                evidence=evidence,
                 remediation="Use differential privacy during training, implement membership inference defenses."
             ))
 
@@ -360,13 +370,15 @@ class MembershipInferenceModule(TestModule):
         duration = time.time() - start_time
 
         if accuracy > 0.55:
+            evidence = asdict(result)
+            evidence["measurement_type"] = "heuristic"
             self.add_finding(Finding(
                 id=self.generate_finding_id(),
                 title="Membership Inference Vulnerability (Label-Only)",
                 category=AttackCategory.MEMBERSHIP_INFERENCE,
-                severity=Severity.MEDIUM,
-                description=f"Label-only attack achieves {accuracy*100:.1f}% accuracy without confidence scores",
-                evidence=asdict(result),
+                severity=Severity.INFO,
+                description=f"Heuristic estimate: label-only attack achieves {accuracy*100:.1f}% accuracy on synthetic membership labels assigned by list index — membership labels are not derived from real training data; this is a research-scaffold estimate, not a real attack result.",
+                evidence=evidence,
                 remediation="Add noise to predictions, implement prediction consistency randomization."
             ))
 
@@ -441,13 +453,15 @@ class MembershipInferenceModule(TestModule):
         duration = time.time() - start_time
 
         if accuracy > 0.55:
+            evidence = asdict(result)
+            evidence["measurement_type"] = "heuristic"
             self.add_finding(Finding(
                 id=self.generate_finding_id(),
                 title="Membership Inference Vulnerability (Entropy)",
                 category=AttackCategory.MEMBERSHIP_INFERENCE,
-                severity=Severity.MEDIUM,
-                description=f"Entropy-based attack achieves {accuracy*100:.1f}% accuracy",
-                evidence=asdict(result),
+                severity=Severity.INFO,
+                description=f"Heuristic estimate: entropy-based attack achieves {accuracy*100:.1f}% accuracy on synthetic membership labels assigned by list index — membership labels are not derived from real training data; this is a research-scaffold estimate, not a real attack result.",
+                evidence=evidence,
                 remediation="Temperature scaling, confidence calibration, or output perturbation."
             ))
 

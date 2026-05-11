@@ -20,6 +20,11 @@ from scripts.utils.base import (
     Severity, AttackCategory
 )
 
+_EXPERIMENTAL_BANNER = (
+    "EXPERIMENTAL MODULE: results from this module are research-scaffold "
+    "outputs, not production measurements. See docs/APP-REVIEW-FINDINGS-11MAY2026.md."
+)
+
 
 @dataclass
 class ExtractionResult:
@@ -46,6 +51,7 @@ class ModelExtractionModule(TestModule):
         config: Optional[Dict] = None
     ):
         super().__init__(target, output_dir, config)
+        self.logger.warning(_EXPERIMENTAL_BANNER)
 
         self.query_budget = config.get('query_budget', 10000)
         self.num_classes = config.get('num_classes', 10)
@@ -149,13 +155,15 @@ class ModelExtractionModule(TestModule):
         self.extraction_results.append(extraction_result)
 
         if agreement_rate > 0.8:
+            evidence = asdict(extraction_result)
+            evidence["measurement_type"] = "heuristic"
             self.add_finding(Finding(
                 id=self.generate_finding_id(),
                 title="Model Vulnerable to Random Query Extraction",
                 category=AttackCategory.EXTRACTION,
-                severity=Severity.HIGH,
-                description=f"Model can be replicated with {agreement_rate*100:.1f}% agreement using only {len(labels)} random queries.",
-                evidence=asdict(extraction_result),
+                severity=Severity.INFO,
+                description=f"Heuristic estimate: model agreement rate is approximately {agreement_rate*100:.1f}% based on query count and label coverage — no surrogate was trained; this is a research-scaffold estimate, not a measured fidelity.",
+                evidence=evidence,
                 remediation="Implement query rate limiting, output perturbation, or watermarking.",
                 cvss_score=7.0
             ))
@@ -252,13 +260,15 @@ class ModelExtractionModule(TestModule):
         self.extraction_results.append(extraction_result)
 
         if agreement_rate > 0.85:
+            evidence = asdict(extraction_result)
+            evidence["measurement_type"] = "heuristic"
             self.add_finding(Finding(
                 id=self.generate_finding_id(),
                 title="Model Vulnerable to Jacobian-Based Extraction",
                 category=AttackCategory.EXTRACTION,
-                severity=Severity.CRITICAL,
-                description=f"Model can be extracted with {agreement_rate*100:.1f}% fidelity using Jacobian-based augmentation with {total_queries} queries.",
-                evidence=asdict(extraction_result),
+                severity=Severity.INFO,
+                description=f"Heuristic estimate: model agreement rate is approximately {agreement_rate*100:.1f}% using random-perturbation augmentation (placeholder for Jacobian-based augmentation) with {total_queries} queries — no surrogate was trained; this is a research-scaffold estimate, not a measured fidelity.",
+                evidence=evidence,
                 remediation="Implement PRADA detection, query monitoring, or differential privacy on outputs.",
                 cvss_score=8.0
             ))
@@ -371,13 +381,15 @@ class ModelExtractionModule(TestModule):
         self.extraction_results.append(extraction_result)
 
         if agreement_rate > 0.9:
+            evidence = asdict(extraction_result)
+            evidence["measurement_type"] = "heuristic"
             self.add_finding(Finding(
                 id=self.generate_finding_id(),
                 title="Model Highly Vulnerable to Active Learning Extraction",
                 category=AttackCategory.EXTRACTION,
-                severity=Severity.CRITICAL,
-                description=f"Model extracted with {agreement_rate*100:.1f}% fidelity using efficient active learning with only {total_queries} queries.",
-                evidence=asdict(extraction_result),
+                severity=Severity.INFO,
+                description=f"Heuristic estimate: model agreement rate is approximately {agreement_rate*100:.1f}% using active learning with only {total_queries} queries — no surrogate was trained; this is a research-scaffold estimate, not a measured fidelity.",
+                evidence=evidence,
                 remediation="Implement query pattern detection and anomaly monitoring.",
                 cvss_score=8.5
             ))
@@ -457,13 +469,15 @@ class ModelExtractionModule(TestModule):
         self.extraction_results.append(extraction_result)
 
         if agreement_rate > 0.75:
+            evidence = asdict(extraction_result)
+            evidence["measurement_type"] = "heuristic"
             self.add_finding(Finding(
                 id=self.generate_finding_id(),
                 title="Model Vulnerable to Knockoff Networks Attack",
                 category=AttackCategory.EXTRACTION,
-                severity=Severity.HIGH,
-                description=f"Model can be replicated using Knockoff approach with {agreement_rate*100:.1f}% agreement.",
-                evidence=asdict(extraction_result),
+                severity=Severity.INFO,
+                description=f"Heuristic estimate: model agreement rate is approximately {agreement_rate*100:.1f}% using Knockoff approach — no surrogate was trained; this is a research-scaffold estimate, not a measured fidelity.",
+                evidence=evidence,
                 remediation="Implement model watermarking, output perturbation, or query monitoring.",
                 cvss_score=7.5
             ))
@@ -513,7 +527,7 @@ class ModelExtractionModule(TestModule):
         labels: List[int],
         num_augmented: int = 10
     ) -> List[np.ndarray]:
-        """Generate Jacobian-based augmented samples"""
+        """Generate randomly-perturbed augmented samples (NOTE: not a real Jacobian-based augmentation; this is research scaffolding — see findings doc)."""
         augmented = []
         for _ in range(num_augmented):
             # Perturb in random direction

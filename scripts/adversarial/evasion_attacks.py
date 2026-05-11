@@ -18,6 +18,11 @@ from scripts.utils.base import (
     Severity, AttackCategory
 )
 
+_EXPERIMENTAL_BANNER = (
+    "EXPERIMENTAL MODULE: results from this module are research-scaffold "
+    "outputs, not production measurements. See docs/APP-REVIEW-FINDINGS-11MAY2026.md."
+)
+
 
 @dataclass
 class AdversarialExample:
@@ -48,6 +53,7 @@ class EvasionAttackModule(TestModule):
         config: Optional[Dict] = None
     ):
         super().__init__(target, output_dir, config)
+        self.logger.warning(_EXPERIMENTAL_BANNER)
 
         # Default configuration
         self.epsilon = config.get('epsilon', 0.3)
@@ -153,7 +159,7 @@ class EvasionAttackModule(TestModule):
                 title="Model Vulnerable to FGSM Adversarial Attack",
                 category=AttackCategory.EVASION,
                 severity=Severity.HIGH,
-                description=f"The model is vulnerable to Fast Gradient Sign Method attacks with {success_rate*100:.1f}% success rate at epsilon={self.epsilon}",
+                description=f"The model is vulnerable to Fast Gradient Sign Method attacks (black-box approximation via random finite differences) with {success_rate*100:.1f}% success rate at epsilon={self.epsilon}",
                 evidence={
                     "success_rate": success_rate,
                     "epsilon": self.epsilon,
@@ -602,7 +608,7 @@ class EvasionAttackModule(TestModule):
             if probs_plus is not None and probs_minus is not None:
                 # Gradient of loss with respect to target class
                 grad = (probs_plus[target_class] - probs_minus[target_class]) / (2 * delta)
-                gradient.flatten()[idx] = -grad  # Negative because we want to decrease confidence
+                gradient.flat[idx] = -grad  # Negative because we want to decrease confidence
 
         return gradient
 
