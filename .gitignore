@@ -217,3 +217,7 @@ poison_samples/
 
 # Reviewer / planning artifacts
 .review-tmp/
+
+# Scratch / session artifacts (must not be committed)
+tmp/
+AGENTS.md
