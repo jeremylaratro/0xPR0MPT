@@ -312,4 +312,4 @@ Please see [SECURITY.md](SECURITY.md) for vulnerability reporting instructions.
 
 ## License
 
-Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC-BY-NC-SA 4.0) — See [LICENSE.md](LICENSE.md) and [DISCLAIMER.md](DISCLAIMER.md).
+Apache License 2.0 — Commercial use permitted; attribution required. See [LICENSE.md](LICENSE.md) and [DISCLAIMER.md](DISCLAIMER.md).
