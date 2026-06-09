@@ -133,6 +133,8 @@ class TestEvasionAttackModule:
             for finding in module.findings:
                 assert_finding_valid(finding)
                 assert finding.category == AttackCategory.EVASION
+                # R4: evasion findings are scaffolded estimates; must be INFO not HIGH/CRITICAL
+                assert finding.severity == Severity.INFO
 
     def test_run_tests_executes_all_methods(self, mock_model, tmp_output_dir, evasion_config):
         """Test run_tests() executes all attack methods"""
@@ -151,6 +153,16 @@ class TestEvasionAttackModule:
         assert "PGD" in test_names
         assert "BoundaryAttack" in test_names
         assert "HopSkipJump" in test_names
+        # R4: all four evasion results are scaffolded; must not inflate rollup
+        for r in results:
+            assert r.attack_succeeded is False, (
+                f"{r.test_name} is a research-scaffold result and must not set attack_succeeded=True"
+            )
+        # R4: any emitted findings must be INFO severity (not HIGH/CRITICAL)
+        for finding in module.findings:
+            assert finding.severity == Severity.INFO, (
+                f"Evasion finding '{finding.title}' has severity {finding.severity}; expected INFO for scaffolded result"
+            )
 
     def test_adversarial_example_dataclass(self, mock_model, tmp_output_dir, evasion_config):
         """Test AdversarialExample dataclass is populated correctly"""
@@ -296,3 +308,49 @@ class TestEvasionEdgeCases:
             result = module.test_fgsm(samples=samples)
 
             assert_test_result_valid(result)
+
+
+class TestEvasionRollupNotInflated:
+    """
+    R4 rollup fix: verify _generate_summary() does not count scaffolded
+    evasion results as 'successful_attacks'.
+    """
+
+    def test_successful_attacks_zero_for_scaffolded_evasion(self, mock_model, tmp_output_dir, evasion_config):
+        """
+        Run all four evasion attack tests, attach to AIMLPentest,
+        and verify successful_attacks rollup is 0.
+        """
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+        from aiml_pentest import AIMLPentest
+
+        pentest = AIMLPentest(output_dir=tmp_output_dir / "pentest_out")
+
+        evasion_module = EvasionAttackModule(
+            target=mock_model,
+            output_dir=tmp_output_dir / "evasion",
+            config=evasion_config
+        )
+        evasion_results = evasion_module.run_tests()
+        pentest.results.extend(evasion_results)
+
+        # R4: all four evasion scaffold results must have attack_succeeded=False
+        for r in evasion_results:
+            assert r.attack_succeeded is False, (
+                f"Evasion result {r.test_name} has attack_succeeded=True — would inflate rollup"
+            )
+
+        # Rollup must reflect zero successful attacks
+        summary = pentest._generate_summary()
+        assert summary["successful_attacks"] == 0, (
+            f"successful_attacks={summary['successful_attacks']} but all evasion results are "
+            f"research-scaffold (attack_succeeded=False); rollup must be 0"
+        )
+
+        # R4: any emitted findings must be INFO severity
+        for finding in evasion_module.findings:
+            assert finding.severity == Severity.INFO, (
+                f"Evasion finding '{finding.title}' severity={finding.severity}; expected INFO"
+            )

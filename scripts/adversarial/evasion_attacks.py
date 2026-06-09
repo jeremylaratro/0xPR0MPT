@@ -158,8 +158,8 @@ class EvasionAttackModule(TestModule):
                 id=self.generate_finding_id(),
                 title="Model Vulnerable to FGSM Adversarial Attack",
                 category=AttackCategory.EVASION,
-                severity=Severity.HIGH,
-                description=f"The model is vulnerable to Fast Gradient Sign Method attacks (black-box approximation via random finite differences) with {success_rate*100:.1f}% success rate at epsilon={self.epsilon}",
+                severity=Severity.INFO,
+                description=f"Research-scaffold estimate (random/approximate samples, not measurement-grade): the model shows {success_rate*100:.1f}% label-flip rate under FGSM-style random finite-difference perturbations at epsilon={self.epsilon} — no real gradient access; this is a research-scaffold estimate, not a measured adversarial robustness result.",
                 evidence={
                     "success_rate": success_rate,
                     "epsilon": self.epsilon,
@@ -172,7 +172,7 @@ class EvasionAttackModule(TestModule):
         return TestResult(
             test_name="FGSM",
             success=True,
-            attack_succeeded=success_rate > 0.1,
+            attack_succeeded=False,  # Research-scaffold: random finite-difference approximation, not a real FGSM gradient; must not inflate rollup
             metrics={
                 "success_rate": success_rate,
                 "epsilon": self.epsilon,
@@ -260,8 +260,8 @@ class EvasionAttackModule(TestModule):
                 id=self.generate_finding_id(),
                 title="Model Vulnerable to PGD Adversarial Attack",
                 category=AttackCategory.EVASION,
-                severity=Severity.CRITICAL,
-                description=f"The model is vulnerable to Projected Gradient Descent attacks with {success_rate*100:.1f}% success rate. PGD is considered a strong attack; vulnerability indicates insufficient robustness.",
+                severity=Severity.INFO,
+                description=f"Research-scaffold estimate (random/approximate samples, not measurement-grade): the model shows {success_rate*100:.1f}% label-flip rate under PGD-style random finite-difference iterations at epsilon={self.epsilon} — no real gradient access; this is a research-scaffold estimate, not a measured adversarial robustness result.",
                 evidence={
                     "success_rate": success_rate,
                     "epsilon": self.epsilon,
@@ -276,7 +276,7 @@ class EvasionAttackModule(TestModule):
         return TestResult(
             test_name="PGD",
             success=True,
-            attack_succeeded=success_rate > 0.1,
+            attack_succeeded=False,  # Research-scaffold: random finite-difference approximation, not a real PGD gradient; must not inflate rollup
             metrics={
                 "success_rate": success_rate,
                 "epsilon": self.epsilon,
@@ -394,8 +394,8 @@ class EvasionAttackModule(TestModule):
                 id=self.generate_finding_id(),
                 title="Model Vulnerable to Decision-Based Boundary Attack",
                 category=AttackCategory.EVASION,
-                severity=Severity.HIGH,
-                description=f"The model is vulnerable to decision-based boundary attacks with {success_rate*100:.1f}% success rate. This attack only requires final decisions, not confidence scores.",
+                severity=Severity.INFO,
+                description=f"Research-scaffold estimate (random/approximate samples, not measurement-grade): the model shows {success_rate*100:.1f}% success rate under a boundary-walk using random perturbation steps — perturbation norms are not guaranteed minimal; this is a research-scaffold estimate, not a measured adversarial robustness result.",
                 evidence={
                     "success_rate": success_rate,
                     "queries_used": total_queries,
@@ -408,7 +408,7 @@ class EvasionAttackModule(TestModule):
         return TestResult(
             test_name="BoundaryAttack",
             success=True,
-            attack_succeeded=success_rate > 0.1,
+            attack_succeeded=False,  # Research-scaffold: approximate random-walk boundary, not a calibrated boundary attack; must not inflate rollup
             metrics={
                 "success_rate": success_rate,
                 "queries_used": total_queries,
@@ -532,8 +532,8 @@ class EvasionAttackModule(TestModule):
                 id=self.generate_finding_id(),
                 title="Model Vulnerable to HopSkipJump Attack",
                 category=AttackCategory.EVASION,
-                severity=Severity.HIGH,
-                description=f"The model is vulnerable to HopSkipJump attacks with {success_rate*100:.1f}% success rate. This is a query-efficient black-box attack.",
+                severity=Severity.INFO,
+                description=f"Research-scaffold estimate (random/approximate samples, not measurement-grade): the model shows {success_rate*100:.1f}% label-flip rate under an approximate HopSkipJump-style binary-search and Monte Carlo gradient estimation using random inputs — no real adversarial optimization; this is a research-scaffold estimate, not a measured adversarial robustness result.",
                 evidence={
                     "success_rate": success_rate,
                     "queries_used": total_queries,
@@ -546,7 +546,7 @@ class EvasionAttackModule(TestModule):
         return TestResult(
             test_name="HopSkipJump",
             success=True,
-            attack_succeeded=success_rate > 0.1,
+            attack_succeeded=False,  # Research-scaffold: random inputs + approximate gradient, not a real HSJ attack; must not inflate rollup
             metrics={
                 "success_rate": success_rate,
                 "queries_used": total_queries,

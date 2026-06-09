@@ -66,7 +66,7 @@ class ModelExtractionModule(TestModule):
 
         test_methods = [
             ('RandomQuery', self.test_random_query_extraction),
-            ('JacobianAugmentation', self.test_jacobian_extraction),
+            ('RandomPerturbationAugmentation', self.test_jacobian_extraction),
             ('ActiveLearning', self.test_active_learning_extraction),
             ('KnockoffNets', self.test_knockoff_extraction),
         ]
@@ -171,7 +171,7 @@ class ModelExtractionModule(TestModule):
         return TestResult(
             test_name="RandomQuery",
             success=True,
-            attack_succeeded=agreement_rate > 0.5,
+            attack_succeeded=False,  # Research-scaffold: no surrogate trained; must not inflate rollup
             metrics={
                 "agreement_rate": agreement_rate,
                 "queries_used": len(labels),
@@ -187,8 +187,9 @@ class ModelExtractionModule(TestModule):
         augmentation_rounds: int = 6
     ) -> TestResult:
         """
-        Jacobian-Based Dataset Augmentation (JBDA)
-        Adaptive extraction using gradient-based sampling
+        Random-Perturbation Augmentation (Jacobian placeholder)
+        Iterative extraction using random-noise augmentation; NOT a real Jacobian/gradient-based method.
+        See _jacobian_augment() docstring and findings doc for context.
         """
         start_time = time.time()
         total_queries = 0
@@ -198,7 +199,7 @@ class ModelExtractionModule(TestModule):
         all_queries = list(seed_set)
         all_labels = []
 
-        self.logger.info("Starting Jacobian-based extraction...")
+        self.logger.info("Starting random-perturbation augmentation extraction (Jacobian placeholder)...")
 
         # Query initial set
         for query in seed_set:
@@ -264,7 +265,7 @@ class ModelExtractionModule(TestModule):
             evidence["measurement_type"] = "heuristic"
             self.add_finding(Finding(
                 id=self.generate_finding_id(),
-                title="Model Vulnerable to Jacobian-Based Extraction",
+                title="Model Vulnerable to Random-Perturbation Augmentation (Jacobian placeholder)",
                 category=AttackCategory.EXTRACTION,
                 severity=Severity.INFO,
                 description=f"Heuristic estimate: model agreement rate is approximately {agreement_rate*100:.1f}% using random-perturbation augmentation (placeholder for Jacobian-based augmentation) with {total_queries} queries — no surrogate was trained; this is a research-scaffold estimate, not a measured fidelity.",
@@ -274,9 +275,9 @@ class ModelExtractionModule(TestModule):
             ))
 
         return TestResult(
-            test_name="JacobianAugmentation",
+            test_name="RandomPerturbationAugmentation",
             success=True,
-            attack_succeeded=agreement_rate > 0.6,
+            attack_succeeded=False,  # Research-scaffold: random-perturbation only; must not inflate rollup
             metrics={
                 "agreement_rate": agreement_rate,
                 "queries_used": total_queries,
@@ -397,7 +398,7 @@ class ModelExtractionModule(TestModule):
         return TestResult(
             test_name="ActiveLearning",
             success=True,
-            attack_succeeded=agreement_rate > 0.6,
+            attack_succeeded=False,  # Research-scaffold: simulated uncertainty, no surrogate trained; must not inflate rollup
             metrics={
                 "agreement_rate": agreement_rate,
                 "queries_used": total_queries,
@@ -485,7 +486,7 @@ class ModelExtractionModule(TestModule):
         return TestResult(
             test_name="KnockoffNets",
             success=True,
-            attack_succeeded=agreement_rate > 0.5,
+            attack_succeeded=False,  # Research-scaffold: random queries, no surrogate trained; must not inflate rollup
             metrics={
                 "agreement_rate": agreement_rate,
                 "queries_used": total_queries,

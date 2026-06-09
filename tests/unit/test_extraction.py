@@ -46,9 +46,11 @@ class TestModelExtractionModule:
         assert "agreement_rate" in result.metrics
         assert "queries_used" in result.metrics
         assert result.queries_used <= extraction_config['query_budget']
+        # R3: scaffold result must not inflate rollup
+        assert result.attack_succeeded is False
 
     def test_jacobian_augmentation(self, mock_model, tmp_output_dir, extraction_config):
-        """Test Jacobian-based augmentation extraction"""
+        """Test random-perturbation augmentation extraction (Jacobian placeholder)"""
         module = ModelExtractionModule(
             target=mock_model,
             output_dir=tmp_output_dir,
@@ -61,9 +63,12 @@ class TestModelExtractionModule:
         )
 
         assert_test_result_valid(result)
-        assert result.test_name == "JacobianAugmentation"
+        # M-13: renamed from "JacobianAugmentation" to reflect actual random-perturbation implementation
+        assert result.test_name == "RandomPerturbationAugmentation"
         assert "augmentation_rounds" in result.metrics
         assert result.metrics["augmentation_rounds"] == 2
+        # R3: scaffold result must not inflate rollup
+        assert result.attack_succeeded is False
 
     def test_active_learning_selection(self, mock_model, tmp_output_dir, extraction_config):
         """Test active learning based extraction"""
@@ -176,9 +181,15 @@ class TestModelExtractionModule:
         assert len(results) == 4
         test_names = [r.test_name for r in results]
         assert "RandomQuery" in test_names
-        assert "JacobianAugmentation" in test_names
+        # M-13: renamed from "JacobianAugmentation" to reflect actual random-perturbation implementation
+        assert "RandomPerturbationAugmentation" in test_names
         assert "ActiveLearning" in test_names
         assert "KnockoffNets" in test_names
+        # R3: all four scaffolded extraction results must have attack_succeeded=False
+        for r in results:
+            assert r.attack_succeeded is False, (
+                f"{r.test_name} is a research-scaffold result and must not set attack_succeeded=True"
+            )
 
     def test_query_log_populated(self, mock_model, tmp_output_dir, extraction_config):
         """Test query log tracks all queries"""
@@ -377,3 +388,44 @@ class TestExtractionEdgeCases:
 
         result = module.test_random_query_extraction(num_queries=20)
         assert_test_result_valid(result)
+
+
+class TestRollupNotInflatedByScaffold:
+    """
+    R3 rollup fix: verify _generate_summary() does not count scaffolded
+    extraction/inference/evasion results as 'successful_attacks'.
+    """
+
+    def test_successful_attacks_zero_for_scaffolded_modules(self, mock_model, tmp_output_dir, extraction_config):
+        """
+        Construct TestResults from the extraction scaffolded module,
+        attach them to AIMLPentest.results, and assert the summary rollup shows 0.
+        """
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+        from aiml_pentest import AIMLPentest
+
+        pentest = AIMLPentest(output_dir=tmp_output_dir / "pentest_out")
+
+        # Run extraction module and attach its results
+        extraction_module = ModelExtractionModule(
+            target=mock_model,
+            output_dir=tmp_output_dir / "extraction",
+            config=extraction_config
+        )
+        extraction_results = extraction_module.run_tests()
+        pentest.results.extend(extraction_results)
+
+        # Verify extraction results all have attack_succeeded=False
+        for r in extraction_results:
+            assert r.attack_succeeded is False, (
+                f"Extraction result {r.test_name} has attack_succeeded=True — would inflate rollup"
+            )
+
+        # Verify the summary rollup is not inflated
+        summary = pentest._generate_summary()
+        assert summary["successful_attacks"] == 0, (
+            f"successful_attacks={summary['successful_attacks']} but all extraction results are "
+            f"research-scaffold (attack_succeeded=False); rollup must be 0"
+        )

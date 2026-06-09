@@ -529,7 +529,10 @@ class DataPoisoningModule(TestModule):
         return TestResult(
             test_name="PoisonRateEstimation",
             success=True,
-            attack_succeeded=True,
+            # Research-scaffold: heuristic poison-rate estimate from confidence
+            # margins on random inputs; no attack is executed, so this must not
+            # inflate the successful_attacks rollup (R3).
+            attack_succeeded=False,
             metrics={
                 "average_margin": avg_margin,
                 "average_confidence": avg_confidence,

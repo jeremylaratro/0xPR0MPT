@@ -100,6 +100,9 @@ class TestDataPoisoningModule:
         result = module.estimate_poison_rate()
 
         assert_test_result_valid(result)
+        # R3: poison-rate estimation is a heuristic (no attack executed); it must
+        # not inflate the successful_attacks rollup.
+        assert result.attack_succeeded is False
         if "estimated_rates" in result.metrics:
             rates = result.metrics["estimated_rates"]
             for rate in rates.values():
