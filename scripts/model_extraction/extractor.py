@@ -250,7 +250,7 @@ class ModelExtractionModule(TestModule):
             task_accuracy=None,
             extraction_time_seconds=duration,
             surrogate_architecture="CNN",
-            extraction_method="JacobianAugmentation",
+            extraction_method="RandomPerturbationAugmentation",
             fidelity_metrics={
                 "label_coverage": len(set(all_labels)) / self.num_classes,
                 "augmentation_rounds": augmentation_rounds,
@@ -265,10 +265,10 @@ class ModelExtractionModule(TestModule):
             evidence["measurement_type"] = "heuristic"
             self.add_finding(Finding(
                 id=self.generate_finding_id(),
-                title="Model Vulnerable to Random-Perturbation Augmentation (Jacobian placeholder)",
+                title="Model Vulnerable to Random-Perturbation Augmentation",
                 category=AttackCategory.EXTRACTION,
                 severity=Severity.INFO,
-                description=f"Heuristic estimate: model agreement rate is approximately {agreement_rate*100:.1f}% using random-perturbation augmentation (placeholder for Jacobian-based augmentation) with {total_queries} queries — no surrogate was trained; this is a research-scaffold estimate, not a measured fidelity.",
+                description=f"Heuristic estimate: model agreement rate is approximately {agreement_rate*100:.1f}% using random-perturbation augmentation with {total_queries} queries — no surrogate was trained; this is a research-scaffold estimate, not a measured fidelity.",
                 evidence=evidence,
                 remediation="Implement PRADA detection, query monitoring, or differential privacy on outputs.",
                 cvss_score=8.0

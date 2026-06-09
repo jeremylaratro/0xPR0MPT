@@ -180,7 +180,7 @@ class DataPoisoningModule(TestModule):
         return TestResult(
             test_name="LabelFlipAssessment",
             success=True,
-            attack_succeeded=assessment.feasible,
+            attack_succeeded=False,  # R3: heuristic feasibility, no attack executed
             metrics={
                 "vulnerability_score": vulnerability_score,
                 "estimated_poison_rate": assessment.estimated_poison_rate,
@@ -387,7 +387,7 @@ class DataPoisoningModule(TestModule):
         return TestResult(
             test_name="CleanLabelAssessment",
             success=True,
-            attack_succeeded=assessment.feasible,
+            attack_succeeded=False,  # R3: heuristic feasibility, no attack executed
             metrics={
                 "avg_confidence": avg_confidence,
                 "low_confidence_ratio": low_confidence_ratio,

@@ -20,7 +20,7 @@ from fastapi import FastAPI, Request, HTTPException, Form, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Add parent path for imports (works regardless of cwd)
 AI_ROOT = Path(__file__).parent.parent.resolve()
@@ -84,7 +84,8 @@ class CorpusFilterRequest(BaseModel):
 
 class GenerateRequest(BaseModel):
     categories: Optional[List[str]] = None
-    count: Optional[int] = None
+    # R13: count=None means unlimited; count<1 is invalid and returns HTTP 422.
+    count: Optional[int] = Field(default=None, ge=1)
     target: Optional[str] = None  # Target for payload interpolation
 
 

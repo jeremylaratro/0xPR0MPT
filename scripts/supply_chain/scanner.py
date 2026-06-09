@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from enum import Enum
 
+from packaging.requirements import Requirement, InvalidRequirement
 from packaging.specifiers import SpecifierSet, InvalidSpecifier
 from packaging.version import Version, InvalidVersion
 
@@ -219,6 +220,11 @@ class SupplyChainScanner(TestModule):
         ml_vulnerability_db = self._get_ml_vulnerability_db()
 
         for dep_name, dep_version in dependencies:
+            # R6: version is None when the dep is unversioned or range-pinned.
+            # Skip CVE matching entirely — we have no concrete installed version
+            # to compare, so we must not default to "affected".
+            if dep_version is None:
+                continue
             if dep_name.lower() in ml_vulnerability_db:
                 for vuln in ml_vulnerability_db[dep_name.lower()]:
                     if self._version_affected(dep_version, vuln.get('affected_versions', '*')):
@@ -769,20 +775,43 @@ class SupplyChainScanner(TestModule):
         )
 
     def _parse_requirements(self, req_file: Path) -> List[Tuple[str, Optional[str]]]:
-        """Parse requirements file for dependencies"""
+        """Parse requirements file for dependencies.
+
+        R6/R7: bounded read (self.max_read_bytes); uses packaging.requirements
+        for accurate parsing.  Only an exact pin (== or ===) yields a concrete
+        installed version; range/unversioned deps return version=None so that
+        CVE matching is skipped in the caller rather than defaulting to
+        "affected".
+        """
         dependencies = []
 
         try:
             with open(req_file) as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#') and not line.startswith('-'):
-                        # Parse package==version or package>=version
-                        match = re.match(r'([a-zA-Z0-9_\-\.]+)(?:[=<>!]+)?([\d\.]*)?', line)
-                        if match:
-                            dependencies.append((match.group(1), match.group(2) or None))
+                content = f.read(self.max_read_bytes)
         except Exception as e:
-            self.logger.debug(f"Failed to parse {req_file}: {e}")
+            self.logger.warning(f"Failed to read {req_file}: {e}")
+            self.skipped_files += 1
+            self.skipped_reasons.append(f"{req_file}: {e}")
+            return dependencies
+
+        for line in content.splitlines():
+            line = line.strip()
+            if not line or line.startswith('#') or line.startswith('-'):
+                continue
+            try:
+                req = Requirement(line)
+            except InvalidRequirement:
+                # Skip env markers, options flags, or malformed lines
+                continue
+
+            # Only treat an exact pin (== or ===) as a known installed version.
+            # Range specifiers (< > >= <= !=) or no specifier → version unknown.
+            exact_version: Optional[str] = None
+            specs = list(req.specifier)
+            if len(specs) == 1 and specs[0].operator in ('==', '==='):
+                exact_version = specs[0].version
+
+            dependencies.append((req.name, exact_version))
 
         return dependencies
 

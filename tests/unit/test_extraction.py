@@ -149,7 +149,7 @@ class TestModelExtractionModule:
             assert ext_result.queries_used > 0
             assert 0 <= ext_result.agreement_rate <= 1
             assert ext_result.extraction_method in [
-                "RandomQuery", "JacobianAugmentation",
+                "RandomQuery", "RandomPerturbationAugmentation",
                 "ActiveLearning", "KnockoffNets"
             ]
 

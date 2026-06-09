@@ -126,44 +126,29 @@ class TestR13CountHonoured:
             )
         assert capped_resp.json()["count"] == full_total
 
-    def test_count_zero_is_treated_as_no_limit(self):
-        """count=0 is falsy → treated the same as None (no limit)."""
+    def test_count_zero_returns_422(self):
+        """count=0 is below the ge=1 constraint → must return HTTP 422, not silently the full corpus."""
         with TestClient(app, raise_server_exceptions=True) as client:
             resp_zero = client.post(
                 "/api/corpus/generate",
                 json={"count": 0, "target": None},
                 headers=XHR_HEADERS,
             )
-        app_module.get_all_test_cases.cache_clear()
-        app_module._session_corpora.clear()
+        assert resp_zero.status_code == 422, (
+            f"Expected 422 for count=0, got {resp_zero.status_code}: {resp_zero.text}"
+        )
 
-        with TestClient(app, raise_server_exceptions=True) as client:
-            resp_none = client.post(
-                "/api/corpus/generate",
-                json={"count": None, "target": None},
-                headers=XHR_HEADERS,
-            )
-        # Both should return the full corpus
-        assert resp_zero.json()["count"] == resp_none.json()["count"]
-
-    def test_negative_count_is_treated_as_no_limit(self):
-        """count<0 fails the `> 0` guard → treated as no limit (like None); must not crash."""
+    def test_negative_count_returns_422(self):
+        """count<0 is below the ge=1 constraint → must return HTTP 422, not silently the full corpus."""
         with TestClient(app, raise_server_exceptions=True) as client:
             resp_neg = client.post(
                 "/api/corpus/generate",
                 json={"count": -5, "target": None},
                 headers=XHR_HEADERS,
             )
-        app_module.get_all_test_cases.cache_clear()
-        app_module._session_corpora.clear()
-        with TestClient(app, raise_server_exceptions=True) as client:
-            resp_none = client.post(
-                "/api/corpus/generate",
-                json={"count": None, "target": None},
-                headers=XHR_HEADERS,
-            )
-        assert resp_neg.status_code == 200
-        assert resp_neg.json()["count"] == resp_none.json()["count"]
+        assert resp_neg.status_code == 422, (
+            f"Expected 422 for count=-5, got {resp_neg.status_code}: {resp_neg.text}"
+        )
 
     def test_subsequent_corpus_api_reflects_bounded_count(self):
         """After generate with count=3, GET /api/corpus returns 3 items for that session."""
