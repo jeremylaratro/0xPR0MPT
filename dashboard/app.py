@@ -9,7 +9,9 @@ import csv
 import functools
 import io
 import json
+import secrets
 import sys
+from collections import Counter, OrderedDict
 from pathlib import Path
 from typing import Dict, List, Optional
 from datetime import datetime
@@ -55,9 +57,16 @@ OWASP_LLM_TOP_10 = {
 # Target Models
 TARGET_MODELS = ["all", "gpt-4", "gpt-4o", "claude-3", "llama-3", "gemini", "mistral"]
 
-# Module-level cache for the most-recently generated target-interpolated corpus.
-# None means "use the default corpus from lru_cache".
-_last_generated_corpus: Optional[List] = None
+# Session-scoped corpus store (R5 fix).
+# Maps opaque session-id -> List[TestCase].  Keyed by a secure-random cookie
+# set on first generate so that separate clients (different cookie jars) each
+# see only their own generated corpus.  Falls back to the shared lru_cache
+# default when no session corpus exists.
+# Implemented as an OrderedDict so we can evict the oldest session when the
+# dict exceeds _SESSION_CORPUS_MAX_SIZE, bounding memory usage.
+_SESSION_CORPUS_MAX_SIZE = 50
+_session_corpora: OrderedDict = OrderedDict()
+_SESSION_COOKIE_NAME = "0xprompt_session"
 
 
 # =============================================================================
@@ -128,13 +137,16 @@ def get_all_test_cases():
     return all_cases
 
 
-def _get_active_corpus() -> List:
+def _get_active_corpus(request: Request) -> List:
     """
-    Return the most-recently generated target corpus if available (finding M-11),
-    otherwise fall back to the cached default corpus.
+    Return the caller's session corpus if one exists (R5/M-11 fix), otherwise
+    fall back to the shared cached default corpus (M-10).
+    Resolution is per-request via the 0xprompt_session cookie, so separate
+    clients (different cookie jars) never see each other's generated corpus.
     """
-    if _last_generated_corpus is not None:
-        return _last_generated_corpus
+    session_id = request.cookies.get(_SESSION_COOKIE_NAME)
+    if session_id and session_id in _session_corpora:
+        return _session_corpora[session_id]
     return get_all_test_cases()
 
 
@@ -192,9 +204,9 @@ async def health_check():
 # =============================================================================
 
 @app.get("/api/corpus")
-async def list_corpus():
+async def list_corpus(request: Request):
     """List all test cases"""
-    corpus = _get_active_corpus()
+    corpus = _get_active_corpus(request)
 
     return {
         "count": len(corpus),
@@ -226,7 +238,7 @@ async def filter_corpus(
     _xhr=Depends(_require_xhr),
 ):
     """Filter test cases (accepts form data from HTMX) — requires XHR header (M-7)"""
-    corpus = _get_active_corpus()
+    corpus = _get_active_corpus(request)
     filtered = corpus
 
     # Apply OWASP filter
@@ -286,9 +298,9 @@ async def filter_corpus(
 
 
 @app.get("/api/corpus/{test_id}")
-async def get_test_case(test_id: str):
+async def get_test_case(test_id: str, request: Request):
     """Get single test case by ID"""
-    corpus = _get_active_corpus()
+    corpus = _get_active_corpus(request)
 
     for tc in corpus:
         if tc.id == test_id:
@@ -313,15 +325,21 @@ async def get_test_case(test_id: str):
 
 
 @app.post("/api/corpus/generate")
-async def generate_corpus(gen_req: GenerateRequest, _xhr=Depends(_require_xhr)):
+async def generate_corpus(
+    gen_req: GenerateRequest,
+    request: Request,
+    response: Response,
+    _xhr=Depends(_require_xhr),
+):
     """
     Generate new corpus with optional target interpolation and category filtering.
-    The generated corpus is stored in the module-level cache so that subsequent
-    export and filter requests serve the same targeted corpus (finding M-11).
+    The generated corpus is stored in a session-scoped dict keyed by a secure
+    cookie so that separate clients do not bleed state (R5/M-11).
+    If gen_req.count is a positive integer the returned/cached corpus is bounded
+    to that many cases (R13); the per-category breakdown reflects the bounded
+    subset.  count is capped at the total available.
     Requires XHR header (M-7).
     """
-    global _last_generated_corpus
-
     # Normalize empty string to None
     target = gen_req.target if gen_req.target else None
     generator = CorpusGenerator(target=target)
@@ -336,44 +354,75 @@ async def generate_corpus(gen_req: GenerateRequest, _xhr=Depends(_require_xhr)):
     else:
         filtered_categories = output.categories
 
-    # Flatten and persist the target-interpolated corpus (finding M-11)
-    all_cases = []
+    # Flatten the target-interpolated corpus
+    all_cases: List = []
     for cases in filtered_categories.values():
         all_cases.extend(cases)
-    _last_generated_corpus = all_cases
 
-    # Also clear the default lru_cache so a follow-up /api/corpus (no target)
-    # will regenerate fresh rather than serving a stale default (finding M-10)
-    get_all_test_cases.cache_clear()
+    # R13: honour count — bounded deterministic slice (capped at total)
+    if gen_req.count is not None and gen_req.count > 0:
+        all_cases = all_cases[: min(gen_req.count, len(all_cases))]
 
+    # R5: store under a per-session id so other clients are unaffected
+    session_id = request.cookies.get(_SESSION_COOKIE_NAME)
+    if not session_id:
+        session_id = secrets.token_urlsafe(32)
+        response.set_cookie(
+            _SESSION_COOKIE_NAME,
+            session_id,
+            httponly=True,
+            samesite="lax",
+            # Only mark Secure when actually served over HTTPS; the default
+            # tool runs on http://127.0.0.1 where a Secure cookie would never
+            # be sent back by the browser.
+            secure=request.url.scheme == "https",
+        )
+
+    # Evict oldest session when we hit the size cap
+    if session_id not in _session_corpora and len(_session_corpora) >= _SESSION_CORPUS_MAX_SIZE:
+        _session_corpora.popitem(last=False)
+    _session_corpora[session_id] = all_cases
+    # Move to end so it's the most-recently-used
+    _session_corpora.move_to_end(session_id)
+
+    # Note: the default lru_cache holds the deterministic canonical corpus
+    # (no target), which never goes stale, and no-session clients always see
+    # it. Generating a session corpus must NOT clear that shared cache (doing
+    # so would needlessly thrash every other client's cached default) — R5.
     total_count = len(all_cases)
+
+    # Rebuild per-category counts from the (possibly bounded) all_cases list
+    cat_counts = Counter(tc.category.value for tc in all_cases)
 
     return {
         "success": True,
         "count": total_count,
         "target": target,
-        "categories": {
-            cat: len(cases) for cat, cases in filtered_categories.items()
-        }
+        "categories": dict(cat_counts),
     }
 
 
 @app.post("/api/corpus/regenerate")
-async def regenerate_corpus():
+async def regenerate_corpus(request: Request, _xhr=Depends(_require_xhr)):
     """
-    Clear the corpus cache and force regeneration on next request (finding M-10).
-    Also discards any previously generated target corpus.
+    Discards the caller's session corpus so their next request falls back to
+    the canonical default (R5). Requires XHR header (M-7/R12).
+
+    The shared default lru_cache is deterministic and never stale, so it is
+    deliberately NOT cleared here — clearing it would evict every other
+    client's cached default as a side effect of one session regenerating.
     """
-    global _last_generated_corpus
-    get_all_test_cases.cache_clear()
-    _last_generated_corpus = None
+    # Discard only the calling session's corpus, not other sessions' (R5)
+    session_id = request.cookies.get(_SESSION_COOKIE_NAME)
+    if session_id and session_id in _session_corpora:
+        del _session_corpora[session_id]
     return {"ok": True}
 
 
 @app.get("/api/export/{format}")
-async def export_corpus(format: str):
+async def export_corpus(format: str, request: Request):
     """Export corpus as a real file download (finding L-10)"""
-    corpus = _get_active_corpus()
+    corpus = _get_active_corpus(request)
 
     if format == "json":
         data = [
@@ -431,9 +480,9 @@ async def export_corpus(format: str):
 
 
 @app.get("/api/stats")
-async def get_stats():
+async def get_stats(request: Request):
     """Get corpus statistics"""
-    corpus = _get_active_corpus()
+    corpus = _get_active_corpus(request)
 
     return {
         "total_test_cases": len(corpus),
