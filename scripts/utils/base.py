@@ -34,6 +34,10 @@ class AttackCategory(Enum):
     DATA_POISONING = "data_poisoning"
     DENIAL_OF_SERVICE = "dos"
     SUPPLY_CHAIN = "supply_chain"
+    # Used by the agent-attack modules (tool_hijacking, mcp_poisoning) wired
+    # into the CLI in R2; previously missing, which silently crashed every
+    # add_finding() in those modules so they emitted nothing.
+    AGENT_HIJACKING = "agent_hijacking"
 
 
 @dataclass
@@ -104,13 +108,18 @@ class APIModelInterface(ModelInterface):
         api_key: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
         rate_limit: float = 1.0,  # requests per second
-        timeout: int = 30
+        timeout: int = 30,
+        request_key: str = "input",
     ):
         self.endpoint = endpoint
         self.api_key = api_key
         self.headers = headers or {}
         self.rate_limit = rate_limit
         self.timeout = timeout
+        # R9: configurable JSON request body key.  Default "input" keeps the
+        # wire format identical to the original hardcoded {"input": input_data}.
+        # Override via: APIModelInterface(..., request_key="prompt")
+        self.request_key = request_key
         self.query_count = 0
         self.last_query_time = 0
 
@@ -138,7 +147,7 @@ class APIModelInterface(ModelInterface):
         try:
             response = self.session.post(
                 self.endpoint,
-                json={"input": input_data},
+                json={self.request_key: input_data},
                 timeout=self.timeout
             )
             response.raise_for_status()

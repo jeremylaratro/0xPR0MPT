@@ -2,6 +2,25 @@
 """
 AI/ML Pentesting Framework - Membership Inference Attacks
 Tests privacy vulnerabilities through membership inference
+
+QUARANTINE NOTICE
+-----------------
+This module is QUARANTINED experimental scaffolding.  It is NOT wired into
+the CLI (`_get_module` loaders) and must NOT be added until a real rebuild is
+complete (see Phase 7 of docs/REMEDIATION-PLAN-08JUN2026.md).
+
+Reasons:
+  - Membership labels are synthetic (assigned by list index), NOT derived from
+    real training/non-training data splits.
+  - Attack accuracy metrics reflect noise on random inputs, not real privacy
+    leakage.  Producing findings from this module is misleading.
+  - All four test methods call target.get_probabilities() with numpy arrays
+    which makes the module numpy-DEPENDENT and unsuitable for numpy-free paths.
+
+The individual test_* methods may still be called directly for unit testing of
+the underlying mechanics (as long as tests are aware of the synthetic-label
+caveat).  The aggregate run_tests() entrypoint is gated by
+self.config.get('allow_synthetic', False) to prevent accidental use.
 """
 
 import time
@@ -57,7 +76,24 @@ class MembershipInferenceModule(TestModule):
         self.attack_results: List[MembershipResult] = []
 
     def run_tests(self) -> List[TestResult]:
-        """Execute membership inference tests"""
+        """Execute membership inference tests.
+
+        Gated by config['allow_synthetic'].  By default this returns an empty
+        list and logs a warning to prevent misleading findings based on
+        synthetic membership labels.  Pass allow_synthetic=True only in
+        contexts where the caller explicitly acknowledges the scaffold
+        limitation (e.g. unit tests exercising the mechanics).
+        """
+        if not self.config.get('allow_synthetic', False):
+            self.logger.warning(
+                "MembershipInferenceModule.run_tests() is QUARANTINED: "
+                "membership labels are synthetic (not derived from real training data). "
+                "No findings will be emitted.  Set config['allow_synthetic']=True "
+                "to run anyway (e.g. in unit tests).  "
+                "See docs/REMEDIATION-PLAN-08JUN2026.md Phase 7."
+            )
+            return []
+
         results = []
 
         test_methods = [
