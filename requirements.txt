@@ -23,6 +23,9 @@ requests>=2.31.0,<3.0
 # ---------------------------------------------------------------------------
 numpy>=1.24.0,<3.0
 
+# Required by supply-chain scanner for PEP-440-correct CVE version matching (R6).
+packaging>=23.0
+
 # Optional: Advanced ML attacks (uncomment as needed)
 # torch>=1.10.0
 # tensorflow>=2.7.0

@@ -4,16 +4,80 @@ AI/ML Pentesting Framework - Supply Chain Security Scanner
 Analyzes ML supply chain for vulnerabilities
 """
 
+import io
 import os
 import re
 import json
 import hashlib
+import logging
+import pickletools
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 from enum import Enum
+
+from packaging.specifiers import SpecifierSet, InvalidSpecifier
+from packaging.version import Version, InvalidVersion
+
+# R7: default cap for bounded reads (bytes).  Callers may override via config.
+_DEFAULT_MAX_READ_BYTES = 4 * 1024 * 1024  # 4 MiB
+
+# R8: callables considered dangerous when referenced via GLOBAL / STACK_GLOBAL.
+# Match is (module, name) or (module, None) to match any name in that module.
+_DANGEROUS_CALLABLES: List[Tuple[str, Optional[str]]] = [
+    # os.system / shell-exec family
+    ("os", "system"),
+    ("posix", "system"),
+    ("nt", "system"),
+    # os.popen — pure-Python wrapper in os.py, records module 'os'
+    ("os", "popen"),
+    ("posix", "popen"),
+    ("nt", "popen"),
+    # os.exec* family
+    ("os", "execv"),
+    ("os", "execve"),
+    ("os", "execvp"),
+    ("os", "execvpe"),
+    ("os", "execl"),
+    ("os", "execle"),
+    ("os", "execlp"),
+    ("os", "execlpe"),
+    ("posix", "execv"),
+    ("posix", "execve"),
+    ("posix", "execvp"),
+    ("posix", "execl"),
+    ("posix", "execlp"),
+    ("nt", "execv"),
+    ("nt", "execve"),
+    # os.spawn* family
+    ("os", "spawnv"),
+    ("os", "spawnve"),
+    ("os", "spawnvp"),
+    ("os", "spawnvpe"),
+    ("os", "spawnl"),
+    ("os", "spawnle"),
+    ("os", "spawnlp"),
+    ("os", "spawnlpe"),
+    ("posix", "spawnv"),
+    ("posix", "spawnve"),
+    ("nt", "spawnv"),
+    ("nt", "spawnve"),
+    # subprocess — any name in subprocess is suspicious
+    ("subprocess", None),
+    # builtins eval/exec
+    ("builtins", "eval"),
+    ("builtins", "exec"),
+    ("__builtin__", "eval"),
+    ("__builtin__", "exec"),
+]
+
+# Opcode names that push a string/unicode onto the stack.
+_STRING_PUSH_OPS = frozenset({
+    "STRING", "BINSTRING", "SHORT_BINSTRING",
+    "UNICODE", "SHORT_BINUNICODE", "BINUNICODE", "BINUNICODE8",
+})
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -88,7 +152,14 @@ class SupplyChainScanner(TestModule):
         self.findings: List[Finding] = []
         self.results: List[TestResult] = []
 
-        import logging
+        # R7: configurable cap on how many bytes are read from each file.
+        self.max_read_bytes: int = int(
+            self.config.get('max_read_bytes', _DEFAULT_MAX_READ_BYTES)
+        )
+        # R7: count of files skipped due to I/O / encoding / permission errors.
+        self.skipped_files: int = 0
+        self.skipped_reasons: List[str] = []
+
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.warning(_EXPERIMENTAL_BANNER)
 
@@ -352,54 +423,37 @@ class SupplyChainScanner(TestModule):
         )
 
     def scan_pickle_files(self) -> TestResult:
-        """Deep scan pickle files for malicious code"""
+        """Deep scan pickle files for malicious code using opcode analysis (R7, R8)."""
         import time
         start_time = time.time()
 
-        pickle_files = list(self.scan_path.glob('**/*.pkl')) + \
-                       list(self.scan_path.glob('**/*.pickle')) + \
-                       list(self.scan_path.glob('**/*.pt')) + \
-                       list(self.scan_path.glob('**/*.pth'))
-
-        # TODO(security): replace with pickletools.genops walk — see finding M-16
-        malicious_patterns = [
-            (rb'exec\s*\(', 'exec() call'),
-            (rb'eval\s*\(', 'eval() call'),
-            (rb'subprocess', 'subprocess module'),
-            (rb'os\.system', 'os.system() call'),
-            (rb'__reduce__', 'Custom __reduce__ (deserialization hook)'),
-            (rb'__reduce_ex__', 'Custom __reduce_ex__'),
-            (rb'builtins', 'builtins access'),
-            (rb'import\s+os', 'os import'),
-            (rb'import\s+sys', 'sys import'),
-            (rb'socket', 'socket module'),
-            (rb'requests', 'requests library'),
-            (rb'urllib', 'urllib module'),
-            (rb'base64', 'base64 encoding'),
-            (rb'compile\s*\(', 'code compilation'),
-        ]
+        pickle_files = (
+            list(self.scan_path.glob('**/*.pkl'))
+            + list(self.scan_path.glob('**/*.pickle'))
+            + list(self.scan_path.glob('**/*.pt'))
+            + list(self.scan_path.glob('**/*.pth'))
+        )
 
         dangerous_files = []
 
         for pkl_file in pickle_files:
             try:
+                # R7: bounded read — cap content to avoid OOM on giant artifacts.
                 with open(pkl_file, 'rb') as f:
-                    content = f.read()
-
-                found_patterns = []
-                for pattern, description in malicious_patterns:
-                    if re.search(pattern, content):
-                        found_patterns.append(description)
-
-                if found_patterns:
+                    content = f.read(self.max_read_bytes)
+                found_ops = self._scan_pickle_opcodes(content)
+                if found_ops:
                     dangerous_files.append({
                         "path": str(pkl_file),
-                        "patterns": found_patterns,
-                        "size": len(content)
+                        "dangerous_callables": found_ops,
+                        "size_read": len(content),
                     })
-
-            except Exception as e:
-                self.logger.debug(f"Failed to scan {pkl_file}: {e}")
+            except OSError as e:
+                self.logger.warning(
+                    f"PickleAnalysis: skipping {pkl_file} — I/O error: {e}"
+                )
+                self.skipped_files += 1
+                self.skipped_reasons.append(f"{pkl_file}: {e}")
 
         if dangerous_files:
             self._add_finding(Finding(
@@ -407,7 +461,10 @@ class SupplyChainScanner(TestModule):
                 title=f"Potentially Malicious Pickle Files: {len(dangerous_files)}",
                 category=AttackCategory.SUPPLY_CHAIN,
                 severity=Severity.CRITICAL,
-                description="Pickle files contain patterns associated with malicious code execution",
+                description=(
+                    "Pickle files reference dangerous callables via GLOBAL / STACK_GLOBAL "
+                    "opcodes (e.g. os.system, subprocess, builtins.eval/exec)."
+                ),
                 evidence={"dangerous_files": dangerous_files[:10]},
                 remediation="Never unpickle untrusted data. Use safetensors or JSON for model weights.",
                 cvss_score=9.5,
@@ -422,11 +479,75 @@ class SupplyChainScanner(TestModule):
             attack_succeeded=len(dangerous_files) > 0,
             metrics={
                 "files_scanned": len(pickle_files),
-                "dangerous_files": len(dangerous_files)
+                "dangerous_files": len(dangerous_files),
+                "skipped_files": self.skipped_files,
             },
             duration_seconds=duration,
             queries_used=0
         )
+
+    def _scan_pickle_opcodes(self, data: bytes) -> List[str]:
+        """
+        R8: walk pickle opcodes and flag GLOBAL / STACK_GLOBAL references to
+        dangerous callables.  Never executes the pickle.  Returns a list of
+        human-readable strings describing each dangerous reference found, or an
+        empty list if none are detected.
+
+        Handles truncated / corrupt pickles gracefully.
+        """
+        dangerous: List[str] = []
+        # recent_strings tracks the last N string-push args so STACK_GLOBAL
+        # (which carries arg=None) can look back two slots for module/name.
+        recent_strings: List[str] = []
+
+        try:
+            stream = io.BytesIO(data)
+            for op, arg, _pos in pickletools.genops(stream):
+                name = op.name
+
+                if name in _STRING_PUSH_OPS and isinstance(arg, str):
+                    recent_strings.append(arg)
+                    # Keep only a short window to avoid unbounded growth.
+                    if len(recent_strings) > 16:
+                        recent_strings.pop(0)
+
+                elif name == "GLOBAL" and isinstance(arg, str):
+                    # arg is "module name" (space-separated)
+                    parts = arg.split(" ", 1)
+                    module = parts[0]
+                    callable_name = parts[1] if len(parts) > 1 else ""
+                    hit = self._is_dangerous_callable(module, callable_name)
+                    if hit:
+                        dangerous.append(hit)
+
+                elif name == "STACK_GLOBAL":
+                    # Module and name were the two most recent string pushes.
+                    if len(recent_strings) >= 2:
+                        module = recent_strings[-2]
+                        callable_name = recent_strings[-1]
+                        hit = self._is_dangerous_callable(module, callable_name)
+                        if hit:
+                            dangerous.append(hit)
+
+        except Exception as exc:
+            # Truncated / corrupt stream — log as warning, not a crash.
+            self.logger.warning(
+                f"_scan_pickle_opcodes: could not fully parse pickle stream "
+                f"({type(exc).__name__}: {exc}); partial results returned."
+            )
+
+        return dangerous
+
+    def _is_dangerous_callable(self, module: str, name: str) -> Optional[str]:
+        """
+        Return a human-readable description if (module, name) matches a
+        dangerous callable entry, else None.
+        """
+        for danger_module, danger_name in _DANGEROUS_CALLABLES:
+            if module == danger_module:
+                if danger_name is None or name == danger_name:
+                    return f"{module}.{name}"
+        return None
 
     def scan_container_images(self) -> TestResult:
         """Scan container images for vulnerabilities"""
@@ -441,8 +562,9 @@ class SupplyChainScanner(TestModule):
 
         for dockerfile in dockerfiles:
             try:
+                # R7: bounded read — cap content to avoid OOM on large files.
                 with open(dockerfile) as f:
-                    content = f.read()
+                    content = f.read(self.max_read_bytes)
 
                 # Check for security issues
                 security_patterns = [
@@ -462,8 +584,12 @@ class SupplyChainScanner(TestModule):
                             "issue": description
                         })
 
-            except Exception as e:
-                self.logger.debug(f"Failed to scan {dockerfile}: {e}")
+            except (OSError, UnicodeDecodeError) as e:
+                self.logger.warning(
+                    f"ContainerScan: skipping {dockerfile} — read error: {e}"
+                )
+                self.skipped_files += 1
+                self.skipped_reasons.append(f"{dockerfile}: {e}")
 
         if issues:
             self._add_finding(Finding(
@@ -485,7 +611,8 @@ class SupplyChainScanner(TestModule):
             metrics={
                 "dockerfiles_scanned": len(dockerfiles),
                 "compose_files_scanned": len(compose_files),
-                "issues_found": len(issues)
+                "issues_found": len(issues),
+                "skipped_files": self.skipped_files,
             },
             duration_seconds=duration,
             queries_used=0
@@ -508,15 +635,20 @@ class SupplyChainScanner(TestModule):
 
         for source_file in source_files:
             try:
+                # R7: bounded read — cap content to avoid OOM on large source files.
                 with open(source_file) as f:
-                    content = f.read()
+                    content = f.read(self.max_read_bytes)
 
                 for pattern in hf_patterns:
                     matches = re.findall(pattern, content)
                     model_refs.update(matches)
 
-            except Exception as e:
-                self.logger.debug(f"Failed to scan {source_file}: {e}")
+            except (OSError, UnicodeDecodeError) as e:
+                self.logger.warning(
+                    f"HuggingFaceModels: skipping {source_file} — read error: {e}"
+                )
+                self.skipped_files += 1
+                self.skipped_reasons.append(f"{source_file}: {e}")
 
         # Known problematic models (simplified - in production, query HF API)
         known_issues = {
@@ -554,7 +686,8 @@ class SupplyChainScanner(TestModule):
             metrics={
                 "model_references_found": len(model_refs),
                 "flagged_models": len(flagged_models),
-                "unversioned_models": len(unversioned)
+                "unversioned_models": len(unversioned),
+                "skipped_files": self.skipped_files,
             },
             duration_seconds=duration,
             queries_used=0
@@ -587,8 +720,9 @@ class SupplyChainScanner(TestModule):
                     continue
 
                 try:
+                    # R7: bounded read — cap content to avoid OOM on large config files.
                     with open(config_file) as f:
-                        content = f.read()
+                        content = f.read(self.max_read_bytes)
 
                     for pattern, secret_type in secret_patterns:
                         matches = re.findall(pattern, content, re.IGNORECASE)
@@ -599,8 +733,12 @@ class SupplyChainScanner(TestModule):
                                 "count": len(matches)
                             })
 
-                except Exception as e:
-                    self.logger.debug(f"Failed to scan {config_file}: {e}")
+                except (OSError, UnicodeDecodeError) as e:
+                    self.logger.warning(
+                        f"ConfigurationSecrets: skipping {config_file} — read error: {e}"
+                    )
+                    self.skipped_files += 1
+                    self.skipped_reasons.append(f"{config_file}: {e}")
 
         if exposed_secrets:
             self._add_finding(Finding(
@@ -623,7 +761,8 @@ class SupplyChainScanner(TestModule):
             attack_succeeded=len(exposed_secrets) > 0,
             metrics={
                 "files_scanned": sum(len(list(self.scan_path.glob(f'**/*{ext}'))) for ext in config_extensions),
-                "secrets_found": len(exposed_secrets)
+                "secrets_found": len(exposed_secrets),
+                "skipped_files": self.skipped_files,
             },
             duration_seconds=duration,
             queries_used=0
@@ -673,76 +812,80 @@ class SupplyChainScanner(TestModule):
         }
 
     def _version_affected(self, installed: Optional[str], affected: str) -> bool:
-        """Check if installed version is affected"""
-        if not installed or affected == '*':
+        """
+        R6: Check if ``installed`` version falls within the ``affected``
+        specifier expression.
+
+        ``affected`` must be a PEP-440 SpecifierSet string such as ``<2.7.0``,
+        ``<=1.0``, ``>=1.0,<2.0``, ``==1.2.3``, ``!=1.0``, or the wildcard
+        ``*`` (meaning every version).
+
+        Returns:
+            True  — installed version is within the affected range.
+            False — installed version is outside the range, or the version
+                    string cannot be parsed (parse failure is NOT treated as
+                    "affected" to avoid false positives).
+        """
+        if affected == '*':
+            return True
+        if not installed:
             return True
 
-        # Simplified version comparison
         try:
-            if affected.startswith('<'):
-                target = affected[1:]
-                return self._version_compare(installed, target) < 0
-            elif affected.startswith('<='):
-                target = affected[2:]
-                return self._version_compare(installed, target) <= 0
-            elif affected.startswith('>='):
-                target = affected[2:]
-                return self._version_compare(installed, target) >= 0
-            elif affected.startswith('>'):
-                target = affected[1:]
-                return self._version_compare(installed, target) > 0
-        except Exception:
-            return True  # Assume affected if comparison fails
+            spec = SpecifierSet(affected, prereleases=True)
+            ver = Version(installed)
+        except (InvalidSpecifier, InvalidVersion) as exc:
+            self.logger.warning(
+                f"_version_affected: could not parse version spec "
+                f"(installed={installed!r}, affected={affected!r}): {exc} — "
+                f"treating as NOT affected to avoid false positives."
+            )
+            return False
 
-        return installed == affected
-
-    def _version_compare(self, v1: str, v2: str) -> int:
-        """Compare version strings"""
-        def normalize(v):
-            return [int(x) for x in re.findall(r'\d+', v)]
-
-        n1, n2 = normalize(v1), normalize(v2)
-
-        for i in range(max(len(n1), len(n2))):
-            a = n1[i] if i < len(n1) else 0
-            b = n2[i] if i < len(n2) else 0
-            if a < b:
-                return -1
-            elif a > b:
-                return 1
-        return 0
+        return ver in spec
 
     def _analyze_model_file(self, model_path: Path) -> ModelArtifact:
-        """Analyze a model file for suspicious content"""
-        suspicious_ops = []
+        """Analyze a model file for suspicious content (R7 bounded read, R8 opcode analysis)."""
+        suspicious_ops: List[str] = []
+        file_hash = "unknown"
+        has_code = False
 
         try:
+            # R7: use true on-disk size regardless of bounded read.
+            size = model_path.stat().st_size
+
+            # R7: read only up to the cap for pattern scanning.
             with open(model_path, 'rb') as f:
-                content = f.read()
-                file_hash = hashlib.sha256(content).hexdigest()
-                size = len(content)
+                content = f.read(self.max_read_bytes)
 
-            # Check for code execution patterns
-            # TODO(security): replace with pickletools.genops walk — see finding M-16
-            patterns = [
-                (rb'__reduce__', 'Custom pickle reduce'),
-                (rb'exec\(', 'exec() call'),
-                (rb'eval\(', 'eval() call'),
-                (rb'os\.system', 'System command execution'),
-                (rb'subprocess', 'Subprocess calls'),
-            ]
+            # Hash is of the bounded prefix (documented as prefix-hash).
+            file_hash = hashlib.sha256(content).hexdigest()
 
-            for pattern, description in patterns:
-                if re.search(pattern, content):
-                    suspicious_ops.append(description)
+            # R8: pickle opcode analysis for pickle-format files.
+            pickle_exts = {'.pkl', '.pickle', '.pt', '.pth'}
+            if model_path.suffix.lower() in pickle_exts:
+                dangerous_callables = self._scan_pickle_opcodes(content)
+                suspicious_ops.extend(dangerous_callables)
+            else:
+                # Non-pickle files: fast byte-pattern heuristics are still
+                # useful (ONNX protobuf, HDF5, etc. shouldn't embed these).
+                patterns = [
+                    (rb'exec\(', 'exec() call'),
+                    (rb'eval\(', 'eval() call'),
+                    (rb'os\.system', 'System command execution'),
+                    (rb'subprocess', 'Subprocess calls'),
+                ]
+                for pattern, description in patterns:
+                    if re.search(pattern, content):
+                        suspicious_ops.append(description)
 
             has_code = bool(suspicious_ops) or b'code' in content.lower()
 
-        except Exception as e:
-            self.logger.debug(f"Failed to analyze {model_path}: {e}")
-            file_hash = "unknown"
+        except OSError as e:
+            self.logger.warning(f"Failed to analyze {model_path}: {e}")
+            self.skipped_files += 1
+            self.skipped_reasons.append(f"{model_path}: {e}")
             size = 0
-            has_code = False
 
         return ModelArtifact(
             path=str(model_path),
@@ -779,7 +922,10 @@ class SupplyChainScanner(TestModule):
                 "critical": sum(1 for v in self.vulnerabilities if v.severity == Severity.CRITICAL),
                 "high": sum(1 for v in self.vulnerabilities if v.severity == Severity.HIGH),
                 "models_scanned": len(self.model_artifacts),
-                "suspicious_models": sum(1 for m in self.model_artifacts if m.suspicious_operations)
+                "suspicious_models": sum(1 for m in self.model_artifacts if m.suspicious_operations),
+                # R7: surface any files that were skipped so callers know the scan was partial.
+                "skipped_files": self.skipped_files,
+                "skipped_reasons": self.skipped_reasons,
             }
         }
 
